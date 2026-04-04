@@ -16,6 +16,11 @@
   box-sizing: border-box;
 }
 
+html,
+body {
+  height: 100%;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -25,6 +30,21 @@ body {
     radial-gradient(circle at right 10%, rgba(12, 123, 89, 0.12), transparent 28%),
     linear-gradient(180deg, #fbf7f1 0%, var(--bg) 55%, #efe4d5 100%);
   font-family: "Avenir Next", "Segoe UI", sans-serif;
+}
+
+.app-body {
+  overflow: hidden;
+}
+
+.app-viewport {
+  height: 100vh;
+  overflow-y: scroll;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
+}
+
+.app-viewport > .page-shell {
+  padding-bottom: calc(48px + 100vh);
 }
 
 a {

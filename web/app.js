@@ -14,6 +14,9 @@ const watchlistTags = document.getElementById("watchlistTags");
 const pinnedList = document.getElementById("pinnedList");
 const liveList = document.getElementById("liveList");
 const historyList = document.getElementById("historyList");
+const alertColumns = document.getElementById("alertColumns");
+const appViewport = document.getElementById("appViewport");
+const pageShell = document.querySelector(".page-shell");
 const pinnedCount = document.getElementById("pinnedCount");
 const liveCount = document.getElementById("liveCount");
 const historyCount = document.getElementById("historyCount");
@@ -34,9 +37,15 @@ let audioPriming = false;
 let watchlistExpanded = localStorage.getItem("flush-detector.watchlist-expanded") === "true";
 let extraCache = new Map();
 let pinSet = new Set(JSON.parse(localStorage.getItem("flush-detector.pins") || "[]"));
+let initialViewportPositioned = false;
+let viewportPositionAttempts = 0;
 
 updateSoundUI();
 updateWatchlistUI();
+
+if ("scrollRestoration" in history) {
+  history.scrollRestoration = "manual";
+}
 
 function connectWS() {
   const protocol = location.protocol === "https:" ? "wss" : "ws";
@@ -345,6 +354,51 @@ function renderExtras(root, items, template, emptyText) {
   root.innerHTML = items.map(template).join("");
 }
 
+function landingTargetTop() {
+  if (!alertColumns || !appViewport) return 0;
+  return Math.max(
+    0,
+    Math.round(
+      alertColumns.getBoundingClientRect().top
+        - appViewport.getBoundingClientRect().top
+        + appViewport.scrollTop
+    )
+  );
+}
+
+function ensureLandingScrollSpace() {
+  if (!appViewport || !pageShell) return;
+  pageShell.style.removeProperty("--landing-scroll-space");
+}
+
+function positionDefaultViewport() {
+  if (initialViewportPositioned || !alertColumns || !appViewport) return;
+
+  ensureLandingScrollSpace();
+  const targetTop = landingTargetTop();
+  appViewport.scrollTop = targetTop;
+
+  if (Math.abs(appViewport.scrollTop - targetTop) <= 2) {
+    initialViewportPositioned = true;
+    return;
+  }
+
+  viewportPositionAttempts += 1;
+  if (viewportPositionAttempts >= 8) {
+    initialViewportPositioned = true;
+    return;
+  }
+
+  requestAnimationFrame(positionDefaultViewport);
+}
+
+function scheduleDefaultViewportPosition() {
+  requestAnimationFrame(positionDefaultViewport);
+  window.setTimeout(positionDefaultViewport, 50);
+  window.setTimeout(positionDefaultViewport, 200);
+  window.setTimeout(positionDefaultViewport, 500);
+}
+
 async function bootstrap() {
   const [configRes, watchlistRes, historyRes] = await Promise.all([
     fetch("/api/config"),
@@ -357,11 +411,17 @@ async function bootstrap() {
   const historyPayload = await historyRes.json();
   alerts = historyPayload.alerts || [];
   render();
+  scheduleDefaultViewportPosition();
   connectWS();
 }
 
 searchInput.addEventListener("input", render);
 sortSelect.addEventListener("change", render);
+window.addEventListener("resize", () => {
+  initialViewportPositioned = false;
+  viewportPositionAttempts = 0;
+  scheduleDefaultViewportPosition();
+});
 
 soundBtn.addEventListener("click", () => {
   soundEnabled = !soundEnabled;
@@ -418,6 +478,7 @@ watchlistToggle.addEventListener("click", () => {
 
 document.addEventListener("pointerdown", requestAudioPrime, { capture: true });
 document.addEventListener("keydown", requestAudioPrime, { capture: true });
+window.addEventListener("load", positionDefaultViewport);
 
 bootstrap().catch((err) => {
   setStatus("Error", err.message);

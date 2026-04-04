@@ -6,102 +6,104 @@
     <title>flush-detector</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
-  <body>
-    <div class="page-shell">
-      <header class="hero">
-        <div>
-          <p class="eyebrow">Shared Stage-1 Detector</p>
-          <h1>Flush Detector</h1>
-          <p class="subtitle">Live, watchlist-driven downside stretch scanner with Massive minute bars, browser alerts, and post-alert context.</p>
-        </div>
-        <div class="hero-status">
-          <span id="statusPill" class="status-pill">Connecting</span>
-          <div id="statusMeta" class="status-meta">Waiting for server state</div>
-        </div>
-      </header>
-
-      <section class="controls-panel">
-        <div class="controls-row">
-          <label class="field grow">
-            <span>Filter</span>
-            <input id="searchInput" type="search" placeholder="Search ticker or name">
-          </label>
-          <label class="field">
-            <span>Sort</span>
-            <select id="sortSelect">
-              <option value="time">Time</option>
-              <option value="score">Score</option>
-            </select>
-          </label>
-          <button id="soundBtn" class="action ghost" type="button">Sound: On</button>
-          <div class="sound-status" aria-live="polite">
-            <span id="soundStateBadge" class="sound-badge blocked">Click To Enable</span>
-            <div id="soundStateText" class="sound-text">Chrome usually needs one click before alert audio can play.</div>
+  <body class="app-body">
+    <div id="appViewport" class="app-viewport">
+      <div class="page-shell">
+        <header class="hero">
+          <div>
+            <p class="eyebrow">Shared Stage-1 Detector</p>
+            <h1>Flush Detector</h1>
+            <p class="subtitle">Live, watchlist-driven downside stretch scanner with Massive minute bars, browser alerts, and post-alert context.</p>
           </div>
-          <button id="reloadBtn" class="action" type="button">Reload Watchlists</button>
-        </div>
-
-        <div class="controls-grid">
-          <label class="field">
-            <span>Threshold</span>
-            <input id="minAlertScore" type="number" min="0" max="100" step="0.1">
-          </label>
-          <label class="field">
-            <span>Start ET</span>
-            <input id="startTime" type="time">
-          </label>
-          <label class="field">
-            <span>End ET</span>
-            <input id="endTime" type="time">
-          </label>
-          <label class="field">
-            <span>Min Bars</span>
-            <input id="minBars" type="number" min="1" step="1">
-          </label>
-          <label class="toggle">
-            <input id="requireVWAP" type="checkbox">
-            <span>Require below VWAP</span>
-          </label>
-          <label class="toggle">
-            <input id="requireDrop" type="checkbox">
-            <span>Require drop from prior 30m high</span>
-          </label>
-          <button id="applyBtn" class="action apply" type="button">Apply Live</button>
-        </div>
-      </section>
-
-      <section class="watchlist-strip collapsed" id="watchlistSection">
-        <button id="watchlistToggle" class="watchlist-toggle" type="button" aria-expanded="false">
-          <span class="strip-label">Watchlist</span>
-          <span id="watchlistSummary" class="watchlist-summary">Loading…</span>
-        </button>
-        <div id="watchlistTags" class="tag-strip"></div>
-      </section>
-
-      <section class="pinned-section">
-        <div class="section-head">
-          <h2>Pinned Alerts</h2>
-          <div id="pinnedCount" class="count-badge">0</div>
-        </div>
-        <div id="pinnedList" class="card-list pinned-list"></div>
-      </section>
-
-      <main class="columns">
-        <section class="column">
-          <div class="section-head">
-            <h2>Live Stream</h2>
-            <div id="liveCount" class="count-badge">0</div>
+          <div class="hero-status">
+            <span id="statusPill" class="status-pill">Connecting</span>
+            <div id="statusMeta" class="status-meta">Waiting for server state</div>
           </div>
-          <div id="liveList" class="card-list"></div>
+        </header>
+
+        <section class="controls-panel">
+          <div class="controls-row">
+            <label class="field grow">
+              <span>Filter</span>
+              <input id="searchInput" type="search" placeholder="Search ticker or name">
+            </label>
+            <label class="field">
+              <span>Sort</span>
+              <select id="sortSelect">
+                <option value="time">Time</option>
+                <option value="score">Score</option>
+              </select>
+            </label>
+            <button id="soundBtn" class="action ghost" type="button">Sound: On</button>
+            <div class="sound-status" aria-live="polite">
+              <span id="soundStateBadge" class="sound-badge blocked">Click To Enable</span>
+              <div id="soundStateText" class="sound-text">Chrome usually needs one click before alert audio can play.</div>
+            </div>
+            <button id="reloadBtn" class="action" type="button">Reload Watchlists</button>
+          </div>
+
+          <div class="controls-grid">
+            <label class="field">
+              <span>Threshold</span>
+              <input id="minAlertScore" type="number" min="0" max="100" step="0.1">
+            </label>
+            <label class="field">
+              <span>Start ET</span>
+              <input id="startTime" type="time">
+            </label>
+            <label class="field">
+              <span>End ET</span>
+              <input id="endTime" type="time">
+            </label>
+            <label class="field">
+              <span>Min Bars</span>
+              <input id="minBars" type="number" min="1" step="1">
+            </label>
+            <label class="toggle">
+              <input id="requireVWAP" type="checkbox">
+              <span>Require below VWAP</span>
+            </label>
+            <label class="toggle">
+              <input id="requireDrop" type="checkbox">
+              <span>Require drop from prior 30m high</span>
+            </label>
+            <button id="applyBtn" class="action apply" type="button">Apply Live</button>
+          </div>
         </section>
-        <section class="column">
-          <div class="section-head">
-            <h2>Recent History</h2>
-            <div id="historyCount" class="count-badge">0</div>
-          </div>
-          <div id="historyList" class="card-list"></div>
+
+        <section class="watchlist-strip collapsed" id="watchlistSection">
+          <button id="watchlistToggle" class="watchlist-toggle" type="button" aria-expanded="false">
+            <span class="strip-label">Watchlist</span>
+            <span id="watchlistSummary" class="watchlist-summary">Loading…</span>
+          </button>
+          <div id="watchlistTags" class="tag-strip"></div>
         </section>
-      </main>
+
+        <section class="pinned-section">
+          <div class="section-head">
+            <h2>Pinned Alerts</h2>
+            <div id="pinnedCount" class="count-badge">0</div>
+          </div>
+          <div id="pinnedList" class="card-list pinned-list"></div>
+        </section>
+
+        <main id="alertColumns" class="columns">
+          <section class="column">
+            <div class="section-head">
+              <h2>Live Stream</h2>
+              <div id="liveCount" class="count-badge">0</div>
+            </div>
+            <div id="liveList" class="card-list"></div>
+          </section>
+          <section class="column">
+            <div class="section-head">
+              <h2>Recent History</h2>
+              <div id="historyCount" class="count-badge">0</div>
+            </div>
+            <div id="historyList" class="card-list"></div>
+          </section>
+        </main>
+      </div>
     </div>
 
     <audio id="alertAudio" preload="auto" src="/flush.wav"></audio>

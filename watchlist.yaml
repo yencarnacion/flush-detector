@@ -1,0 +1,8 @@
+watchlist:
+  - symbol: "AAPL"
+    name: "Apple Inc."
+  - symbol: "TSLA"
+    name: "Tesla, Inc."
+  - symbol: "NVDA"
+    name: "NVIDIA Corporation"
+

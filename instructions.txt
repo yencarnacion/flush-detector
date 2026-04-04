@@ -1,0 +1,563 @@
+You are writing a complete, runnable Go application called `flush-detector`.
+
+Build it as a new project, but model its architecture, repo layout, UX style, and operational patterns after alertcat:
+https://github.com/yencarnacion/alertcat
+
+Also use the official Massive Go client as the market-data foundation:
+https://github.com/massive-com/client-go
+
+Massive docs:
+https://massive.com/docs
+https://massive.com/docs/rest/stocks/news
+https://massive.com/docs/rest/stocks/filings/index
+
+Goal
+Create a live, web-based watchlist scanner for a shared intraday “flush detector” and “flush score” for mean-reversion candidates. This is NOT the full FB / RB / V setup detector yet. This is the shared stage-1 detector only: it should detect stretched/climactic downside flushes and rank them with a 0-100 flush score.
+
+The app must feel similar to alertcat:
+- Go backend
+- web UI served by the same app
+- watchlist-driven
+- websocket updates to the browser
+- `.env` file for API key
+- `config.yaml`
+- `watchlist.yaml`
+- configurable server port
+- alert cards
+- recent news and SEC filings on the alert cards
+- WAV alert sounds
+- similar repo layout and operational simplicity
+
+Important migration / naming detail
+Alertcat still reflects Polygon naming in places. This new project must use Massive naming:
+- use `MASSIVE_API_KEY` in `.env`
+- use `github.com/massive-com/client-go/v3/...`
+- use Massive REST / WebSocket naming in comments and docs
+
+High-level product spec
+Build `flush-detector` as a complete repo that:
+1. Loads config from:
+   - `.env`
+   - `config.yaml`
+   - `watchlist.yaml`
+2. Connects to Massive market data for a watchlist of stock tickers.
+3. Maintains live 1-minute bars per symbol.
+4. Calculates the shared flush score on completed 1-minute bars using only information available up to that bar.
+5. Raises an alert when a symbol enters a configurable flush-score threshold during the active time window.
+6. Pushes alerts live to a browser UI over websocket.
+7. Shows alert cards with:
+   - ticker
+   - optional company name
+   - source tags if multiple watchlists are merged
+   - alert time
+   - price
+   - flush score
+   - metric breakdown
+   - recent news
+   - recent SEC filings
+   - open-chart button / ticker click behavior like alertcat
+8. Plays WAV sounds for alerts.
+9. Keeps recent alert history for new websocket clients and for the UI history pane.
+10. Supports watchlist reload without restarting, like alertcat-style operational workflow.
+
+Non-goals for this version
+Do NOT implement full classification logic for:
+- flush-base (FB)
+- rubberband (RB)
+- right side of the V (V)
+
+But design the code so those can be added later as stage-2 confirmation modules.
+
+Preferred tech stack
+Use:
+- Go 1.22+
+- `github.com/massive-com/client-go/v3/websocket`
+- `github.com/massive-com/client-go/v3/rest`
+- `github.com/massive-com/client-go/v3/rest/gen` if needed
+- `github.com/gorilla/websocket` for browser websocket
+- `github.com/joho/godotenv`
+- `gopkg.in/yaml.v3`
+
+Frontend:
+- plain HTML / CSS / vanilla JS
+- no framework required
+- mirror alertcat’s static `web/` pattern
+
+Data source requirements
+Use Massive as the primary source.
+
+For live bars:
+- Prefer subscribing to stock minute aggregates if the SDK supports it cleanly.
+- If minute aggregates are not ideal, subscribe to second aggregates and roll them into 1-minute bars.
+- The detector must operate on 1-minute bars.
+
+For startup warmup:
+- Backfill recent 1-minute historical bars for all watchlist symbols so rolling windows and VWAP are warm immediately on startup.
+- Make this configurable.
+
+For news and filings:
+- Prefer using Massive REST endpoints if exposed cleanly through the generated Go client.
+- If the SDK method names are awkward or missing, write thin `net/http` wrappers that call Massive REST directly using the same `MASSIVE_API_KEY`.
+- News should come from Massive stock news.
+- Filings should come from Massive SEC EDGAR index or the most appropriate filing endpoint.
+
+Required repo layout
+Use a structure inspired by alertcat, but adapted to this project. A good target layout:
+
+flush-detector/
+  main.go
+  go.mod
+  go.sum
+  Makefile
+  README.md
+  .env.example
+  config.yaml
+  watchlist.yaml
+  example-watchlist.yaml
+  internal/
+    config/
+    watchlist/
+    massive/
+    bars/
+    flush/
+    news/
+    filings/
+    webui/
+    persistence/
+  web/
+    index.html
+    app.js
+    styles.css
+    news.html
+    sounds/
+      alert_up.wav
+      alert_down.wav
+      flush.wav
+
+You may choose slightly different package names if cleaner, but keep the repo easy to understand.
+
+Behavior modeled after alertcat
+Please intentionally borrow the following useful ideas from alertcat:
+- `.env` loading
+- YAML config
+- YAML watchlist format
+- optional multi-watchlist mode with `-watchlists` CLI flag
+- merge symbols across files
+- source tags on alert cards using filename stems
+- a static `web/` directory
+- websocket hub for browser clients
+- replay recent history to newly connected browser clients
+- a watchlist reload action
+- sound endpoints / browser-playable alert sounds
+- chart opener base URL in config
+- state file for persistence of lightweight state
+- Makefile with at least `run` and `test`
+
+Port / config requirements
+The server port must be configurable from `config.yaml`, modeled after alertcat. Default to 8087.
+
+Required `.env.example`
+Create:
+MASSIVE_API_KEY=your_api_key_here
+
+Optionally support `POLYGON_API_KEY` as a fallback alias for convenience, but `MASSIVE_API_KEY` is the primary and documented env var.
+
+Required `watchlist.yaml` format
+Use the alertcat-style YAML shape:
+
+watchlist:
+  - symbol: "AAPL"
+    name: "Apple Inc."
+  - symbol: "TSLA"
+  - symbol: "NVDA"
+
+Support:
+- `watchlist.yaml` by default
+- `-watchlists file1.yaml,file2.yaml` optional CLI mode
+- merging duplicate symbols
+- preserving source-file tags for UI display
+
+Required `config.yaml`
+Use an alertcat-style config file, but adapted for flush detection. Include at least these fields:
+
+server_port: 8087
+
+alert:
+  sound_file: "./web/sounds/flush.wav"          # fallback
+  up_sound_file: "./web/sounds/alert_up.wav"    # optional / future use
+  down_sound_file: "./web/sounds/alert_down.wav" # optional / future use
+  flush_sound_file: "./web/sounds/flush.wav"
+  enable_sound: true
+  cooldown_seconds: 10
+
+timezone: "America/New_York"
+
+persistence:
+  state_file: "state.json"
+
+ui:
+  chart_opener_base_url: "http://localhost:8081"
+
+flush:
+  enabled: true
+  session: "rth"
+  start_time: "09:40"
+  end_time: "15:30"
+  min_bars_before_alerts: 10
+  min_alert_score: 60.0
+  backfill_bars: 60
+  warmup_lookback_bars: 30
+  require_below_vwap: true
+  require_drop_from_recent_high: true
+  max_alerts_per_symbol_per_day: 3
+
+news:
+  enabled: true
+  max_items: 5
+  lookback_days: 2
+  cache_ttl_seconds: 300
+
+filings:
+  enabled: true
+  max_items: 5
+  lookback_days: 5
+  cache_ttl_seconds: 300
+
+logging:
+  level: "info"
+
+You may add more fields if helpful.
+
+Core detector requirements
+This project is only the shared flush detector. It should detect the common stretch/climax state before any later FB/RB/V confirmation logic.
+
+Important implementation rules:
+- Calculate only from completed 1-minute bars.
+- No lookahead.
+- Everything must be computable from data available at that moment.
+- Use Eastern Time.
+- Reset session VWAP at the session start.
+- Default active window: 09:40 to 15:30 ET.
+- Make these time settings configurable.
+
+Flush score
+Implement the flush score exactly as follows unless there is a very strong technical reason to preserve behavior while refactoring the code structure.
+
+Definitions
+For each completed 1-minute bar `t`:
+
+Helper:
+clip(x, lo, hi) = max(lo, min(hi, x))
+
+Use:
+- current bar OHLCV = `bar_t`
+- `price_ref` = `bar_t.low`
+- `close_t` = `bar_t.close`
+
+1) Drop from prior 30-minute high
+`recent_high_30` =
+  max(high of the PRIOR 30 completed 1-minute bars, excluding current bar)
+
+If fewer than 30 prior bars exist, use all available prior bars, but do not allow alerts until `min_bars_before_alerts` is satisfied.
+
+`drop_from_prior_30m_high_pct` =
+  max(0, (recent_high_30 - price_ref) / recent_high_30 * 100)
+
+2) Distance below session VWAP
+Compute session VWAP from session start through current bar using bar typical price:
+`typical_price = (high + low + close) / 3`
+
+Running VWAP:
+`session_vwap = sum(typical_price * volume) / sum(volume)`
+
+Then:
+`distance_below_vwap_pct` =
+  max(0, (session_vwap - price_ref) / session_vwap * 100)
+
+3) 5-minute downside rate of change
+`close_5 = close from 5 completed bars ago`
+`roc_5m_pct = max(0, (close_5 - close_t) / close_5 * 100)`
+
+4) 10-minute downside rate of change
+`close_10 = close from 10 completed bars ago`
+`roc_10m_pct = max(0, (close_10 - close_t) / close_10 * 100)`
+
+5) 20-minute downside slope
+Take the closes of the last up to 20 completed bars including current bar.
+Require at least 10 bars for this metric, else treat as 0.
+
+Compute least-squares linear regression slope in PRICE units per bar using x = 0..n-1.
+Convert to percent-per-bar relative to mean close of the window:
+
+`slope_pct_per_bar = (slope_price_per_bar / mean_close_window) * 100`
+
+Then:
+`down_slope_20m_pct_per_bar = max(0, -slope_pct_per_bar)`
+
+6) Range expansion on the last leg lower
+Use:
+- `short_range` = mean(high-low of the last 3 completed bars INCLUDING current bar)
+- `base_range`  = mean(high-low of the 10 completed bars immediately BEFORE those 3)
+
+`range_expansion = short_range / max(base_range, tiny)`
+
+If insufficient history, degrade gracefully and do not alert until minimum history exists.
+
+7) Volume expansion on the last leg lower
+Use:
+- `short_vol` = mean(volume of the last 3 completed bars INCLUDING current bar)
+- `base_vol`  = mean(volume of the 10 completed bars immediately BEFORE those 3)
+
+`volume_expansion = short_vol / max(base_vol, tiny)`
+
+Final flush score
+`flush_score` =
+  25 * clip(drop_from_prior_30m_high_pct / 4.0, 0, 1) +
+  20 * clip(distance_below_vwap_pct       / 2.0, 0, 1) +
+  15 * clip(roc_5m_pct                    / 1.5, 0, 1) +
+  10 * clip(roc_10m_pct                   / 2.5, 0, 1) +
+  10 * clip(down_slope_20m_pct_per_bar    / 0.15, 0, 1) +
+  10 * clip((range_expansion - 1.0)       / 1.5, 0, 1) +
+  10 * clip((volume_expansion - 1.0)      / 2.0, 0, 1)
+
+Clamp the final score to [0, 100].
+Round for UI display to one decimal place.
+
+Alert condition
+Default alert when:
+- flush detection is enabled
+- current ET time is inside configured window
+- enough history exists
+- flush_score >= `flush.min_alert_score`
+- symbol not on cooldown
+
+Optional extra gating for v1 to reduce noise:
+- if `require_below_vwap` is true, require `distance_below_vwap_pct > 0`
+- if `require_drop_from_recent_high` is true, require `drop_from_prior_30m_high_pct > 0`
+
+Scoring tiers for UI
+Use these labels:
+- 0-39: Low
+- 40-59: Notable
+- 60-74: Candidate
+- 75-89: Strong
+- 90-100: Extreme
+
+Show the tier on each alert card.
+
+Metrics shown on alert cards
+Each alert card must show at least:
+- symbol
+- optional company name
+- alert time
+- last price
+- flush score
+- tier
+- drop_from_prior_30m_high_pct
+- distance_below_vwap_pct
+- roc_5m_pct
+- roc_10m_pct
+- down_slope_20m_pct_per_bar
+- range_expansion
+- volume_expansion
+- source tags from watchlist files if multi-watchlist mode is used
+
+Card summary sentence
+Generate a short one-line explanation like:
+“3.4% below prior 30m high, 1.2% below VWAP, 5m ROC -1.0%, range x1.6, volume x1.9”
+
+UI requirements
+Build a browser UI inspired by alertcat:
+- split live/history layout
+- pinned alerts area
+- live alert stream
+- recent history
+- status banner / connection status
+- watchlist reload control
+- Apply Live control for changing detector settings without restart
+- sound enable/disable toggle
+- search/filter by ticker
+- sort by time or score
+- click ticker to open chart using:
+  `${ui.chart_opener_base_url}/api/open-chart/{TICKER}/{YYYY-MM-DD}`
+
+Each alert card should:
+- render immediately with core alert data
+- then asynchronously populate:
+  - recent news
+  - recent SEC filings
+
+Use a dedicated endpoint for extra metadata, similar in spirit to alertcat’s `/api/extra`.
+
+News / filings enrichment
+Implement:
+GET /api/extra?ticker=XYZ&date=YYYY-MM-DD&days=2
+
+Return JSON like:
+{
+  "ticker": "XYZ",
+  "date": "2026-04-02",
+  "news": [
+    {
+      "title": "...",
+      "published_utc": "...",
+      "source": "...",
+      "url": "...",
+      "summary": "..."
+    }
+  ],
+  "filings": [
+    {
+      "form": "8-K",
+      "filed_at": "...",
+      "description": "...",
+      "url": "..."
+    }
+  ]
+}
+
+Requirements:
+- cache extras per ticker/date
+- bounded concurrency for metadata fetching
+- graceful failure if news or filings fail
+- alert cards should still render even if metadata is unavailable
+
+Websocket requirements
+Use a websocket hub like alertcat.
+Expose:
+- `/ws`
+
+On connect:
+- send connection status
+- send recent alert history
+- continue streaming live alerts
+
+Suggested message types:
+- `status`
+- `history`
+- `flush_alert`
+- `config`
+- `watchlist`
+- `error`
+
+History replay requirement
+Keep recent alert history in memory and optionally persist lightweight state to `state.json`.
+When a new browser client connects, immediately send history so the page is populated without waiting for the next alert.
+
+Sound requirements
+Use WAV files, not MP3-first.
+Expected files:
+- `web/sounds/flush.wav`
+- `web/sounds/alert_up.wav`
+- `web/sounds/alert_down.wav`
+
+Expose browser-playable endpoints:
+- `/alert.wav`
+- `/alert-up.wav`
+- `/alert-down.wav`
+- `/flush.wav`
+
+Behavior:
+- serve the configured WAV if present
+- if missing, synthesize a simple in-memory fallback beep WAV so the UI still works
+- browser should preload and play sound on new alert
+- honor sound enable / disable toggle
+
+HTTP endpoints
+At minimum implement:
+- `GET /` -> main UI
+- `GET /news.html`
+- `GET /ws`
+- `GET /api/health`
+- `GET /api/config`
+- `GET /api/watchlist`
+- `POST /api/watchlist/reload`
+- `GET /api/history`
+- `GET /api/extra?ticker=...&date=...&days=...`
+- sound endpoints listed above
+
+Watchlist reload
+Implement a watchlist reload action so the backend can re-read YAML watchlists and resubscribe / update tracked symbols without a full restart if reasonably possible.
+If hot resubscribe is too risky, do the cleanest robust approach and document it.
+
+Massive client requirements
+Prefer current v3 packages.
+Use the official Massive SDK for:
+- websocket subscriptions
+- REST bar backfill
+- REST metadata where available
+
+If exact generated method names differ, inspect the current repo/docs and wire the correct ones.
+Do not guess method names if the docs/repo show a better option.
+
+Robustness requirements
+- graceful shutdown
+- reconnect to Massive websocket
+- automatic resubscribe after reconnect if the SDK does not already handle it
+- timeouts for REST calls
+- bounded concurrency for backfills
+- bounded concurrency for metadata calls
+- no data races
+- clear structured logging
+- avoid panics from missing config / missing sound files / missing metadata
+
+Testing requirements
+Write tests for:
+- YAML config parsing
+- watchlist parsing and multi-watchlist merge logic
+- flush score calculation
+- regression slope helper
+- VWAP helper
+- range / volume expansion helpers
+- detector alert threshold logic
+- websocket hub history behavior if practical
+
+README requirements
+Write a useful README that explains:
+- what the app does
+- how it differs from alertcat
+- setup
+- `.env`
+- `config.yaml`
+- `watchlist.yaml`
+- how to run
+- how to reload watchlists
+- how the flush score is calculated
+- what “shared flush detector” means
+- what is NOT implemented yet (FB / RB / V confirmation)
+
+Makefile requirements
+Provide at least:
+- `run`
+- `test`
+- `build`
+
+Deliverable format
+Output the complete repository contents, not just an outline.
+Do not give pseudocode only.
+Write the actual code and files.
+
+Acceptance criteria
+I should be able to:
+1. copy the files into a repo named `flush-detector`
+2. set `MASSIVE_API_KEY` in `.env`
+3. edit `watchlist.yaml`
+4. edit `config.yaml`
+5. run `go mod tidy`
+6. run `make run`
+7. open the configured port in a browser
+8. see live flush-score alerts
+9. hear WAV alerts
+10. see news and SEC filings on the alert cards
+
+One more architecture requirement
+Please keep the detector layered:
+- stage 1 = shared flush detector + flush score
+- later stage 2 can classify FB / RB / V
+
+So create the code in a way that a future developer can add:
+- `internal/flush/fb.go`
+- `internal/flush/rb.go`
+- `internal/flush/v.go`
+
+without rewriting the stage-1 detector.

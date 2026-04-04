@@ -1,0 +1,46 @@
+server_port: 8087
+
+alert:
+  sound_file: "./web/sounds/flush.wav"
+  up_sound_file: "./web/sounds/alert_up.wav"
+  down_sound_file: "./web/sounds/alert_down.wav"
+  flush_sound_file: "./web/sounds/flush.wav"
+  enable_sound: true
+  cooldown_seconds: 10
+
+timezone: "America/New_York"
+
+persistence:
+  state_file: "state.json"
+
+ui:
+  chart_opener_base_url: "http://localhost:8081"
+
+flush:
+  enabled: true
+  session: "rth"
+  start_time: "09:40"
+  end_time: "15:30"
+  min_bars_before_alerts: 10
+  min_alert_score: 60.0
+  backfill_bars: 60
+  warmup_lookback_bars: 30
+  require_below_vwap: true
+  require_drop_from_recent_high: true
+  max_alerts_per_symbol_per_day: 7
+
+news:
+  enabled: true
+  max_items: 5
+  lookback_days: 2
+  cache_ttl_seconds: 300
+
+filings:
+  enabled: true
+  max_items: 5
+  lookback_days: 5
+  cache_ttl_seconds: 300
+
+logging:
+  level: "info"
+

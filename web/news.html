@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>flush-detector extras</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body class="news-body">
+    <div class="news-shell">
+      <a class="back-link" href="/">Back to scanner</a>
+      <h1 id="newsTitle">Alert Context</h1>
+      <p id="newsMeta" class="subtitle">Loading…</p>
+      <div class="news-grid">
+        <section class="news-panel">
+          <h2>Recent News</h2>
+          <div id="newsItems" class="stack-list"></div>
+        </section>
+        <section class="news-panel">
+          <h2>SEC Filings</h2>
+          <div id="filingItems" class="stack-list"></div>
+        </section>
+      </div>
+    </div>
+    <script>
+      const params = new URLSearchParams(location.search);
+      const ticker = params.get("ticker") || "";
+      const date = params.get("date") || "";
+      const days = params.get("days") || "2";
+      const title = document.getElementById("newsTitle");
+      const meta = document.getElementById("newsMeta");
+      const newsItems = document.getElementById("newsItems");
+      const filingItems = document.getElementById("filingItems");
+      title.textContent = ticker ? `${ticker} Context` : "Alert Context";
+      meta.textContent = date ? `Session date ${date}` : "No alert date provided";
+
+      function renderList(root, items, renderer, emptyText) {
+        root.innerHTML = "";
+        if (!items || items.length === 0) {
+          const p = document.createElement("p");
+          p.className = "empty";
+          p.textContent = emptyText;
+          root.appendChild(p);
+          return;
+        }
+        items.forEach(item => root.appendChild(renderer(item)));
+      }
+
+      function renderNews(item) {
+        const el = document.createElement("article");
+        el.className = "stack-card";
+        el.innerHTML = `
+          <a href="${item.url}" target="_blank" rel="noreferrer">${item.title}</a>
+          <div class="mini-meta">${item.source || "Unknown source"} • ${item.published_utc || ""}</div>
+          <p>${item.summary || "No summary available."}</p>
+        `;
+        return el;
+      }
+
+      function renderFiling(item) {
+        const el = document.createElement("article");
+        el.className = "stack-card";
+        el.innerHTML = `
+          <a href="${item.url}" target="_blank" rel="noreferrer">${item.form || "Filing"}</a>
+          <div class="mini-meta">${item.filed_at || ""}</div>
+          <p>${item.description || "No description available."}</p>
+        `;
+        return el;
+      }
+
+      async function load() {
+        if (!ticker || !date) return;
+        const res = await fetch(`/api/extra?ticker=${encodeURIComponent(ticker)}&date=${encodeURIComponent(date)}&days=${encodeURIComponent(days)}`);
+        const payload = await res.json();
+        renderList(newsItems, payload.news, renderNews, "No news returned for this alert.");
+        renderList(filingItems, payload.filings, renderFiling, "No SEC filings returned for this alert.");
+      }
+
+      load().catch(err => {
+        meta.textContent = `Failed to load extras: ${err.message}`;
+      });
+    </script>
+  </body>
+  </html>
+

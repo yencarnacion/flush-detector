@@ -185,6 +185,12 @@ function formatTime(value) {
   }
 }
 
+function minuteBucket(value) {
+  const ts = new Date(value).getTime();
+  if (Number.isNaN(ts)) return Number.NEGATIVE_INFINITY;
+  return Math.floor(ts / 60000);
+}
+
 function filterAlerts() {
   const q = searchInput.value.trim().toUpperCase();
   let rows = alerts.slice();
@@ -196,7 +202,15 @@ function filterAlerts() {
   if (sortSelect.value === "score") {
     rows.sort((a, b) => (b.flush_score || 0) - (a.flush_score || 0));
   } else {
-    rows.sort((a, b) => new Date(b.alert_time) - new Date(a.alert_time));
+    rows.sort((a, b) => {
+      const minuteDiff = minuteBucket(b.alert_time) - minuteBucket(a.alert_time);
+      if (minuteDiff !== 0) return minuteDiff;
+
+      const scoreDiff = (b.flush_score || 0) - (a.flush_score || 0);
+      if (scoreDiff !== 0) return scoreDiff;
+
+      return new Date(b.alert_time) - new Date(a.alert_time);
+    });
   }
   return rows;
 }

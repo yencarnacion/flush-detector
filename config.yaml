@@ -27,7 +27,7 @@ flush:
   warmup_lookback_bars: 30
   require_below_vwap: true
   require_drop_from_recent_high: true
-  max_alerts_per_symbol_per_day: 7
+  max_alerts_per_symbol_per_day: 30
 
 news:
   enabled: true

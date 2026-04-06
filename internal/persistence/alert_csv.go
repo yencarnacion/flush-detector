@@ -7,20 +7,29 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"flush-detector/internal/flush"
 )
 
 type AlertCSVLogger struct {
 	dir string
+	tz  *time.Location
 	mu  sync.Mutex
 }
 
-func NewAlertCSVLogger(dir string) *AlertCSVLogger {
+func NewAlertCSVLogger(dir string, tz *time.Location) *AlertCSVLogger {
 	if strings.TrimSpace(dir) == "" {
 		dir = "log"
 	}
-	return &AlertCSVLogger{dir: dir}
+	if tz == nil {
+		if loc, err := time.LoadLocation("America/New_York"); err == nil {
+			tz = loc
+		} else {
+			tz = time.UTC
+		}
+	}
+	return &AlertCSVLogger{dir: dir, tz: tz}
 }
 
 func (l *AlertCSVLogger) Append(alert flush.Alert) error {
@@ -31,7 +40,8 @@ func (l *AlertCSVLogger) Append(alert flush.Alert) error {
 		return err
 	}
 
-	path := filepath.Join(l.dir, fmt.Sprintf("alerts_%s.csv", alert.AlertTime.Format("20060102")))
+	alertTimeET := alert.AlertTime.In(l.tz)
+	path := filepath.Join(l.dir, fmt.Sprintf("alerts_%s.csv", alertTimeET.Format("20060102")))
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
@@ -49,7 +59,7 @@ func (l *AlertCSVLogger) Append(alert flush.Alert) error {
 			return err
 		}
 	}
-	if err := w.Write(alertCSVRecord(alert)); err != nil {
+	if err := w.Write(alertCSVRecord(alert, l.tz)); err != nil {
 		return err
 	}
 	w.Flush()
@@ -76,10 +86,11 @@ var alertCSVHeader = []string{
 	"summary",
 }
 
-func alertCSVRecord(alert flush.Alert) []string {
+func alertCSVRecord(alert flush.Alert, tz *time.Location) []string {
+	alertTimeET := alert.AlertTime.In(tz)
 	return []string{
 		alert.ID,
-		alert.AlertTime.Format("2006-01-02 15:04:05"),
+		alertTimeET.Format("2006-01-02 15:04:05"),
 		alert.SessionDate,
 		alert.Symbol,
 		alert.Name,

@@ -109,7 +109,7 @@ func main() {
 		barCh:          make(chan bars.Bar, 4096),
 		hub:            webui.NewHub(logger, 200),
 		store:          persistence.New(cfg.Persistence.StateFile),
-		alertLog:       persistence.NewAlertCSVLogger("log"),
+		alertLog:       persistence.NewAlertCSVLogger("log", tz),
 		detector:       flush.NewDetector(cfg.Flush, cfg.Alert.CooldownSeconds, tz),
 	}
 

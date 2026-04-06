@@ -15,7 +15,7 @@ func TestAlertCSVLoggerAppendCreatesDailyCSV(t *testing.T) {
 	t.Parallel()
 
 	dir := filepath.Join(t.TempDir(), "log")
-	logger := NewAlertCSVLogger(dir)
+	logger := NewAlertCSVLogger(dir, newYorkLocation(t))
 
 	first := sampleAlert(time.Date(2026, 4, 6, 9, 41, 0, 0, time.FixedZone("ET", -4*3600)), "AAPL-1", "AAPL", 62.3)
 	second := sampleAlert(time.Date(2026, 4, 6, 9, 52, 0, 0, time.FixedZone("ET", -4*3600)), "TSLA-2", "TSLA", 78.4)
@@ -66,7 +66,7 @@ func TestAlertCSVLoggerAppendSplitsFilesByDay(t *testing.T) {
 	t.Parallel()
 
 	dir := filepath.Join(t.TempDir(), "log")
-	logger := NewAlertCSVLogger(dir)
+	logger := NewAlertCSVLogger(dir, newYorkLocation(t))
 
 	first := sampleAlert(time.Date(2026, 4, 6, 15, 59, 0, 0, time.FixedZone("ET", -4*3600)), "AAPL-1", "AAPL", 62.3)
 	second := sampleAlert(time.Date(2026, 4, 7, 9, 41, 0, 0, time.FixedZone("ET", -4*3600)), "AAPL-2", "AAPL", 66.1)
@@ -92,6 +92,38 @@ func TestAlertCSVLoggerAppendSplitsFilesByDay(t *testing.T) {
 	}
 	if secondDay[1][0] != "AAPL-2" {
 		t.Fatalf("second day id = %q, want AAPL-2", secondDay[1][0])
+	}
+}
+
+func TestAlertCSVLoggerAppendNormalizesToNewYorkDST(t *testing.T) {
+	t.Parallel()
+
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatalf("LoadLocation error = %v", err)
+	}
+
+	dir := filepath.Join(t.TempDir(), "log")
+	logger := NewAlertCSVLogger(dir, loc)
+
+	winter := sampleAlert(time.Date(2026, 1, 6, 14, 41, 0, 0, time.UTC), "AAPL-1", "AAPL", 62.3)
+	summer := sampleAlert(time.Date(2026, 7, 6, 13, 41, 0, 0, time.UTC), "AAPL-2", "AAPL", 66.1)
+
+	if err := logger.Append(winter); err != nil {
+		t.Fatalf("Append(winter) error = %v", err)
+	}
+	if err := logger.Append(summer); err != nil {
+		t.Fatalf("Append(summer) error = %v", err)
+	}
+
+	winterDay := readCSVRows(t, filepath.Join(dir, "alerts_20260106.csv"))
+	summerDay := readCSVRows(t, filepath.Join(dir, "alerts_20260706.csv"))
+
+	if winterDay[1][1] != "2026-01-06 09:41:00" {
+		t.Fatalf("winter alert time = %q, want 2026-01-06 09:41:00", winterDay[1][1])
+	}
+	if summerDay[1][1] != "2026-07-06 09:41:00" {
+		t.Fatalf("summer alert time = %q, want 2026-07-06 09:41:00", summerDay[1][1])
 	}
 }
 
@@ -135,4 +167,14 @@ func sampleAlert(ts time.Time, id, symbol string, score float64) flush.Alert {
 		Summary:     flush.Summary(metrics),
 		Metrics:     metrics,
 	}
+}
+
+func newYorkLocation(t *testing.T) *time.Location {
+	t.Helper()
+
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatalf("LoadLocation error = %v", err)
+	}
+	return loc
 }

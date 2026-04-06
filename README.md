@@ -11,6 +11,7 @@
 - Streams live stock minute aggregates from Massive
 - Calculates the shared flush score on completed 1-minute bars only
 - Emits live browser alerts with score tiers, metric breakdown, news, and SEC filings
+- Appends each triggered alert to a daily CSV log under `./log/alerts_YYYYMMDD.csv`
 - Replays recent alert history to new websocket clients
 - Supports watchlist reload without restarting
 - Supports live threshold/window changes from the UI
@@ -176,4 +177,4 @@ make build
 - Startup backfill uses Massive REST aggregates.
 - Live streaming uses Massive stock minute aggregate websocket subscriptions.
 - News and SEC filings are loaded on demand for each alert card and cached server-side.
-
+- Triggered alerts are also written to one CSV file per day in `./log`. The CSV includes alert time, symbol, score, tier, price, source tags, and the core flush metrics, but it does not include news or SEC filing enrichment.

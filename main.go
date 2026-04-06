@@ -44,6 +44,7 @@ type App struct {
 	barCh    chan bars.Bar
 	hub      *webui.Hub
 	store    *persistence.Store
+	alertLog *persistence.AlertCSVLogger
 	detector *flush.Detector
 	massive  *massive.Client
 	news     *news.Service
@@ -108,6 +109,7 @@ func main() {
 		barCh:          make(chan bars.Bar, 4096),
 		hub:            webui.NewHub(logger, 200),
 		store:          persistence.New(cfg.Persistence.StateFile),
+		alertLog:       persistence.NewAlertCSVLogger("log"),
 		detector:       flush.NewDetector(cfg.Flush, cfg.Alert.CooldownSeconds, tz),
 	}
 
@@ -225,6 +227,9 @@ func (a *App) runDetector(ctx context.Context) {
 				continue
 			}
 			a.hub.AddAlert(*alert)
+			if err := a.alertLog.Append(*alert); err != nil {
+				a.log.Warn("append alert csv", "error", err, "symbol", alert.Symbol, "alert_time", alert.AlertTime.Format(time.RFC3339))
+			}
 			if err := a.store.SaveAlerts(a.hub.History()); err != nil {
 				a.log.Warn("save state", "error", err)
 			}

@@ -60,6 +60,7 @@ func TestDetectorThresholdLogic(t *testing.T) {
 	loc := time.FixedZone("ET", -4*3600)
 	cfg := config.Default().Flush
 	cfg.MinAlertScore = 0
+	cfg.MinVolumeSince4AM = 0
 	cfg.MinBarsBeforeAlerts = 10
 	cfg.StartTime = "09:40"
 	cfg.EndTime = "15:30"
@@ -82,6 +83,48 @@ func TestDetectorThresholdLogic(t *testing.T) {
 	}
 	if alert != nil && alert.Symbol != "AAPL" {
 		t.Fatalf("alert.Symbol = %s, want AAPL", alert.Symbol)
+	}
+}
+
+func TestDetectorRequiresVolumeSince4AM(t *testing.T) {
+	t.Parallel()
+
+	loc := time.FixedZone("ET", -4*3600)
+	cfg := config.Default().Flush
+	cfg.MinAlertScore = 0
+	cfg.MinVolumeSince4AM = 500000
+	cfg.MinBarsBeforeAlerts = 10
+	cfg.StartTime = "09:40"
+	cfg.EndTime = "15:30"
+	cfg.RequireBelowVWAP = false
+	cfg.RequireDropFromRecentHigh = false
+
+	d := NewDetector(cfg, 0, loc)
+	meta := SymbolMeta{Symbol: "AAPL"}
+
+	premarketStart := time.Date(2026, 4, 2, 4, 0, 0, 0, loc)
+	for _, bar := range sampleBarsAt(premarketStart, 20) {
+		bar.Volume = 25000
+		if alert := d.Process(meta, bar); alert != nil {
+			t.Fatal("unexpected premarket alert")
+		}
+	}
+
+	rthStart := time.Date(2026, 4, 2, 9, 30, 0, 0, loc)
+	var alert *Alert
+	found := false
+	for _, bar := range sampleBarsAt(rthStart, 20) {
+		if next := d.Process(meta, bar); next != nil {
+			alert = next
+			found = true
+		}
+	}
+
+	if !found || alert == nil {
+		t.Fatal("expected alert once cumulative volume threshold was reached")
+	}
+	if alert.VolumeSince4AM < cfg.MinVolumeSince4AM {
+		t.Fatalf("VolumeSince4AM = %.0f, want at least %.0f", alert.VolumeSince4AM, cfg.MinVolumeSince4AM)
 	}
 }
 

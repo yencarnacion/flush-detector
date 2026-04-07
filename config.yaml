@@ -21,6 +21,7 @@ flush:
   session: "rth"
   start_time: "09:40"
   end_time: "15:30"
+  min_volume_since_4am: 500000
   min_bars_before_alerts: 10
   min_alert_score: 60.0
   backfill_bars: 60
@@ -43,4 +44,3 @@ filings:
 
 logging:
   level: "info"
-

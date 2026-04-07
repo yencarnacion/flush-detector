@@ -14,17 +14,18 @@ type Metrics struct {
 }
 
 type Alert struct {
-	ID          string    `json:"id"`
-	Symbol      string    `json:"symbol"`
-	Name        string    `json:"name,omitempty"`
-	Sources     []string  `json:"sources,omitempty"`
-	AlertTime   time.Time `json:"alert_time"`
-	SessionDate string    `json:"session_date"`
-	Price       float64   `json:"price"`
-	FlushScore  float64   `json:"flush_score"`
-	Tier        string    `json:"tier"`
-	Summary     string    `json:"summary"`
-	Metrics     Metrics   `json:"metrics"`
+	ID             string    `json:"id"`
+	Symbol         string    `json:"symbol"`
+	Name           string    `json:"name,omitempty"`
+	Sources        []string  `json:"sources,omitempty"`
+	AlertTime      time.Time `json:"alert_time"`
+	SessionDate    string    `json:"session_date"`
+	Price          float64   `json:"price"`
+	FlushScore     float64   `json:"flush_score"`
+	Tier           string    `json:"tier"`
+	VolumeSince4AM float64   `json:"volume_since_4am"`
+	Summary        string    `json:"summary"`
+	Metrics        Metrics   `json:"metrics"`
 }
 
 type SymbolMeta struct {

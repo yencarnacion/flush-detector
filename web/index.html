@@ -39,6 +39,7 @@
               <span id="soundStateBadge" class="sound-badge blocked">Click To Enable</span>
               <div id="soundStateText" class="sound-text">Chrome usually needs one click before alert audio can play.</div>
             </div>
+            <button id="replayDayBtn" class="action ghost" type="button">Replay Day</button>
             <button id="reloadBtn" class="action" type="button">Reload Watchlists</button>
           </div>
 
@@ -87,20 +88,13 @@
           <div id="pinnedList" class="card-list pinned-list"></div>
         </section>
 
-        <main id="alertColumns" class="columns">
-          <section class="column">
+        <main id="alertColumns" class="alerts-board">
+          <section class="alerts-panel">
             <div class="section-head">
-              <h2>Live Stream</h2>
+              <h2>Alert Feed</h2>
               <div id="liveCount" class="count-badge">0</div>
             </div>
-            <div id="liveList" class="card-list"></div>
-          </section>
-          <section class="column">
-            <div class="section-head">
-              <h2>Recent History</h2>
-              <div id="historyCount" class="count-badge">0</div>
-            </div>
-            <div id="historyList" class="card-list"></div>
+            <div id="liveList" class="minute-feed"></div>
           </section>
         </main>
       </div>

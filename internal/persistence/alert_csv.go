@@ -3,6 +3,7 @@ package persistence
 import (
 	"encoding/csv"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,6 +67,21 @@ func (l *AlertCSVLogger) Append(alert flush.Alert) error {
 	return w.Error()
 }
 
+func (l *AlertCSVLogger) DeleteDay(day time.Time) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	err := os.Remove(l.pathForDay(day))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
+}
+
+func (l *AlertCSVLogger) pathForDay(day time.Time) string {
+	return filepath.Join(l.dir, fmt.Sprintf("alerts_%s.csv", day.In(l.tz).Format("20060102")))
+}
+
 var alertCSVHeader = []string{
 	"alert_id",
 	"alert_time_et",
@@ -83,6 +99,7 @@ var alertCSVHeader = []string{
 	"down_slope_20m_pct_per_bar",
 	"range_expansion",
 	"volume_expansion",
+	"volume_since_4am",
 	"summary",
 }
 
@@ -105,10 +122,15 @@ func alertCSVRecord(alert flush.Alert, tz *time.Location) []string {
 		formatFloat1(alert.Metrics.DownSlope20mPctPerBar),
 		formatFloat1(alert.Metrics.RangeExpansion),
 		formatFloat1(alert.Metrics.VolumeExpansion),
+		formatFloat0(alert.VolumeSince4AM),
 		alert.Summary,
 	}
 }
 
 func formatFloat1(v float64) string {
 	return fmt.Sprintf("%.1f", v)
+}
+
+func formatFloat0(v float64) string {
+	return fmt.Sprintf("%.0f", math.Round(v))
 }

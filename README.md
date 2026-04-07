@@ -61,6 +61,7 @@ The app reads `config.yaml` on startup. Important fields:
 - `alert.cooldown_seconds`: per-symbol cooldown
 - `ui.chart_opener_base_url`: used for ticker click/open-chart behavior
 - `flush.start_time` and `flush.end_time`: active ET alert window
+- `flush.min_volume_since_4am`: cumulative volume required from 04:00 ET to alert time
 - `flush.min_alert_score`: live threshold
 - `flush.backfill_bars`: startup warmup depth
 - `news` and `filings`: enrichment toggles, item counts, and cache TTL
@@ -177,4 +178,4 @@ make build
 - Startup backfill uses Massive REST aggregates.
 - Live streaming uses Massive stock minute aggregate websocket subscriptions.
 - News and SEC filings are loaded on demand for each alert card and cached server-side.
-- Triggered alerts are also written to one CSV file per day in `./log`. The CSV includes alert time, symbol, score, tier, price, source tags, and the core flush metrics, but it does not include news or SEC filing enrichment.
+- Triggered alerts are also written to one CSV file per day in `./log`. The CSV includes alert time, symbol, score, tier, price, source tags, cumulative 04:00 ET volume, and the core flush metrics, but it does not include news or SEC filing enrichment.

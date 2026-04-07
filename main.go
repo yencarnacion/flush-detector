@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +41,11 @@ type App struct {
 	cfg        config.Config
 	watchlist  []watchlist.Symbol
 	watchIndex map[string]watchlist.Symbol
+
+	processMu     sync.Mutex
+	replayStateMu sync.Mutex
+	replaying     bool
+	deferredBars  []bars.Bar
 
 	barCh    chan bars.Bar
 	hub      *webui.Hub
@@ -198,6 +204,7 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("GET /api/watchlist", a.handleWatchlist)
 	mux.HandleFunc("POST /api/watchlist/reload", a.handleWatchlistReload)
 	mux.HandleFunc("GET /api/history", a.handleHistory)
+	mux.HandleFunc("POST /api/replay-day", a.handleReplayDay)
 	mux.HandleFunc("GET /api/extra", a.handleExtra)
 
 	mux.HandleFunc("GET /alert.wav", a.soundHandler(func(cfg config.Config) string { return cfg.Alert.SoundFile }, 660))
@@ -214,26 +221,7 @@ func (a *App) runDetector(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case bar := <-a.barCh:
-			meta, ok := a.lookupSymbol(bar.Symbol)
-			if !ok {
-				continue
-			}
-			alert := a.detector.Process(flush.SymbolMeta{
-				Symbol:  meta.Symbol,
-				Name:    meta.Name,
-				Sources: meta.Sources,
-			}, bar)
-			if alert == nil {
-				continue
-			}
-			a.hub.AddAlert(*alert)
-			if err := a.alertLog.Append(*alert); err != nil {
-				a.log.Warn("append alert csv", "error", err, "symbol", alert.Symbol, "alert_time", alert.AlertTime.Format(time.RFC3339))
-			}
-			if err := a.store.SaveAlerts(a.hub.History()); err != nil {
-				a.log.Warn("save state", "error", err)
-			}
-			a.setStatus("live")
+			a.handleLiveBar(bar)
 		}
 	}
 }
@@ -241,18 +229,18 @@ func (a *App) runDetector(ctx context.Context) {
 func (a *App) warmup(ctx context.Context, symbols []string) {
 	cfg := a.currentConfig()
 	nowET := time.Now().In(a.tz)
-	sessionStart := flush.SessionWindow(strings.ToLower(cfg.Flush.Session), nowET)
-	var from time.Time
-	var to time.Time
-	if nowET.Before(sessionStart) {
-		day := nowET.AddDate(0, 0, -1)
-		from = flush.SessionWindow(strings.ToLower(cfg.Flush.Session), day)
-		to = from.Add(12 * time.Hour)
-	} else {
-		from = sessionStart
-		to = nowET
+	from := flush.VolumeWindowStart(nowET)
+	to := nowET
+	if to.Before(from) {
+		return
 	}
-	limit := max(120, cfg.Flush.BackfillBars+cfg.Flush.WarmupLookbackBars+cfg.Flush.MinBarsBeforeAlerts+60)
+	limit := max(
+		120,
+		max(
+			cfg.Flush.BackfillBars+cfg.Flush.WarmupLookbackBars+cfg.Flush.MinBarsBeforeAlerts+60,
+			int(to.Sub(from)/time.Minute)+5,
+		),
+	)
 
 	sem := make(chan struct{}, 4)
 	var wg sync.WaitGroup
@@ -307,6 +295,16 @@ func (a *App) handleWatchlist(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleHistory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"alerts": a.hub.History()})
+}
+
+func (a *App) handleReplayDay(w http.ResponseWriter, r *http.Request) {
+	if !a.beginReplay() {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "replay already running"})
+		return
+	}
+
+	go a.replayDay()
+	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "status": "replay_day_started"})
 }
 
 func (a *App) handleWatchlistReload(w http.ResponseWriter, r *http.Request) {
@@ -439,6 +437,48 @@ func (a *App) currentConfig() config.Config {
 	return a.cfg
 }
 
+func (a *App) beginReplay() bool {
+	a.replayStateMu.Lock()
+	defer a.replayStateMu.Unlock()
+	if a.replaying {
+		return false
+	}
+	a.replaying = true
+	a.deferredBars = nil
+	return true
+}
+
+func (a *App) stopReplay() {
+	a.replayStateMu.Lock()
+	a.replaying = false
+	a.deferredBars = nil
+	a.replayStateMu.Unlock()
+}
+
+func (a *App) queueReplayBar(bar bars.Bar) bool {
+	a.replayStateMu.Lock()
+	defer a.replayStateMu.Unlock()
+	if !a.replaying {
+		return false
+	}
+	a.deferredBars = append(a.deferredBars, bar)
+	return true
+}
+
+func (a *App) popDeferredBarsOrFinishReplay() ([]bars.Bar, bool) {
+	a.replayStateMu.Lock()
+	defer a.replayStateMu.Unlock()
+
+	if len(a.deferredBars) == 0 {
+		a.replaying = false
+		return nil, true
+	}
+
+	out := append([]bars.Bar(nil), a.deferredBars...)
+	a.deferredBars = nil
+	return out, false
+}
+
 func (a *App) currentWatchlist() []watchlist.Symbol {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -461,6 +501,181 @@ func (a *App) setStatus(text string) {
 		Symbols:   len(a.currentWatchlist()),
 		Alerts:    len(a.hub.History()),
 	})
+}
+
+func (a *App) handleLiveBar(bar bars.Bar) {
+	meta, ok := a.lookupSymbol(bar.Symbol)
+	if !ok {
+		return
+	}
+	if a.queueReplayBar(bar) {
+		return
+	}
+
+	a.processMu.Lock()
+	defer a.processMu.Unlock()
+
+	if a.queueReplayBar(bar) {
+		return
+	}
+	if a.processBarLocked(symbolMeta(meta), bar, true) {
+		a.setStatus("live")
+	}
+}
+
+func (a *App) replayDay() {
+	nowET := time.Now().In(a.tz)
+	from := flush.VolumeWindowStart(nowET)
+	if nowET.Before(from) {
+		a.stopReplay()
+		a.setStatus("replay unavailable before 04:00 ET")
+		return
+	}
+
+	cfg := a.currentConfig()
+	a.processMu.Lock()
+	if err := a.resetReplayStateLocked(nowET, cfg); err != nil {
+		a.processMu.Unlock()
+		a.log.Error("reset replay day state", "error", err)
+		a.stopReplay()
+		a.setStatus("replay failed")
+		return
+	}
+	a.processMu.Unlock()
+	a.setStatus("replay day loading")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+
+	allBars := a.backfillDayBars(ctx, watchlist.Symbols(a.currentWatchlist()), from, nowET)
+	if ctx.Err() != nil {
+		a.log.Error("replay day backfill context", "error", ctx.Err())
+		a.stopReplay()
+		a.setStatus("replay failed")
+		return
+	}
+
+	a.processMu.Lock()
+	defer a.processMu.Unlock()
+
+	a.setStatus("replay day processing")
+	for _, bar := range allBars {
+		meta, ok := a.lookupSymbol(bar.Symbol)
+		if !ok {
+			continue
+		}
+		a.processBarLocked(symbolMeta(meta), bar, false)
+	}
+	if err := a.store.SaveAlerts(a.hub.History()); err != nil {
+		a.log.Warn("save replay day state", "error", err)
+	}
+
+	for {
+		deferred, done := a.popDeferredBarsOrFinishReplay()
+		if done {
+			break
+		}
+		sortBarsChronological(deferred)
+		for _, bar := range deferred {
+			meta, ok := a.lookupSymbol(bar.Symbol)
+			if !ok {
+				continue
+			}
+			a.processBarLocked(symbolMeta(meta), bar, false)
+		}
+		if err := a.store.SaveAlerts(a.hub.History()); err != nil {
+			a.log.Warn("save replay day deferred state", "error", err)
+		}
+	}
+
+	a.setStatus("live")
+}
+
+func (a *App) resetReplayStateLocked(day time.Time, cfg config.Config) error {
+	a.detector.Reset(cfg.Flush, cfg.Alert.CooldownSeconds)
+	a.hub.ReplaceHistory(nil)
+	if err := a.store.SaveAlerts(nil); err != nil {
+		return err
+	}
+	return a.alertLog.DeleteDay(day)
+}
+
+func (a *App) processBarLocked(meta flush.SymbolMeta, bar bars.Bar, persistState bool) bool {
+	alert := a.detector.Process(meta, bar)
+	if alert == nil {
+		return false
+	}
+
+	a.hub.AddAlert(*alert)
+	if err := a.alertLog.Append(*alert); err != nil {
+		a.log.Warn("append alert csv", "error", err, "symbol", alert.Symbol, "alert_time", alert.AlertTime.Format(time.RFC3339))
+	}
+	if persistState {
+		if err := a.store.SaveAlerts(a.hub.History()); err != nil {
+			a.log.Warn("save state", "error", err)
+		}
+	}
+	return true
+}
+
+func (a *App) backfillDayBars(ctx context.Context, symbols []string, from, to time.Time) []bars.Bar {
+	limit := max(120, int(to.Sub(from)/time.Minute)+5)
+	sem := make(chan struct{}, 4)
+	results := make(chan []bars.Bar, len(symbols))
+
+	var wg sync.WaitGroup
+	for _, symbol := range symbols {
+		symbol := symbol
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case <-ctx.Done():
+				return
+			case sem <- struct{}{}:
+			}
+			defer func() { <-sem }()
+
+			barsList, err := a.massive.BackfillBars(ctx, symbol, from, to, limit)
+			if err != nil {
+				a.log.Warn("replay day backfill failed", "symbol", symbol, "error", err)
+				return
+			}
+			results <- barsList
+		}()
+	}
+
+	wg.Wait()
+	close(results)
+
+	allBars := make([]bars.Bar, 0, len(symbols)*limit)
+	for barsList := range results {
+		allBars = append(allBars, barsList...)
+	}
+	sortBarsChronological(allBars)
+	return allBars
+}
+
+func sortBarsChronological(allBars []bars.Bar) {
+	sort.Slice(allBars, func(i, j int) bool {
+		iEnd := allBars[i].End.UnixMilli()
+		jEnd := allBars[j].End.UnixMilli()
+		if iEnd != jEnd {
+			return iEnd < jEnd
+		}
+		if allBars[i].Symbol != allBars[j].Symbol {
+			return allBars[i].Symbol < allBars[j].Symbol
+		}
+		return allBars[i].Start.UnixMilli() < allBars[j].Start.UnixMilli()
+	})
+}
+
+func symbolMeta(item watchlist.Symbol) flush.SymbolMeta {
+	return flush.SymbolMeta{
+		Symbol:  item.Symbol,
+		Name:    item.Name,
+		Sources: item.Sources,
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

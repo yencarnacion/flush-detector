@@ -17,6 +17,7 @@ flush:
   session: "rth"
   start_time: "09:45"
   end_time: "15:20"
+  min_volume_since_4am: 750000
   min_alert_score: 72.5
 `), 0o644)
 	if err != nil {
@@ -35,6 +36,9 @@ flush:
 	}
 	if cfg.Flush.MinAlertScore != 72.5 {
 		t.Fatalf("MinAlertScore = %.1f, want 72.5", cfg.Flush.MinAlertScore)
+	}
+	if cfg.Flush.MinVolumeSince4AM != 750000 {
+		t.Fatalf("MinVolumeSince4AM = %.0f, want 750000", cfg.Flush.MinVolumeSince4AM)
 	}
 	if cfg.Alert.CooldownSeconds != 10 {
 		t.Fatalf("default cooldown not applied, got %d", cfg.Alert.CooldownSeconds)

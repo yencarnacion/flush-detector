@@ -134,10 +134,14 @@ func Summary(metrics Metrics) string {
 	)
 }
 
+func VolumeWindowStart(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), 4, 0, 0, 0, t.Location())
+}
+
 func SessionWindow(session string, t time.Time) (start time.Time) {
 	switch session {
 	case "pre":
-		return time.Date(t.Year(), t.Month(), t.Day(), 4, 0, 0, 0, t.Location())
+		return VolumeWindowStart(t)
 	case "pm":
 		return time.Date(t.Year(), t.Month(), t.Day(), 16, 0, 0, 0, t.Location())
 	default:

@@ -54,7 +54,10 @@ func TestAlertCSVLoggerAppendCreatesDailyCSV(t *testing.T) {
 	if rows[1][7] != "62.3" {
 		t.Fatalf("flush score = %q, want 62.3", rows[1][7])
 	}
-	if rows[1][16] == "" {
+	if rows[1][16] != "512300" {
+		t.Fatalf("volume_since_4am = %q, want 512300", rows[1][16])
+	}
+	if rows[1][17] == "" {
 		t.Fatal("summary should not be empty")
 	}
 	if rows[2][0] != "TSLA-2" {
@@ -127,6 +130,25 @@ func TestAlertCSVLoggerAppendNormalizesToNewYorkDST(t *testing.T) {
 	}
 }
 
+func TestAlertCSVLoggerDeleteDayRemovesDailyCSV(t *testing.T) {
+	t.Parallel()
+
+	dir := filepath.Join(t.TempDir(), "log")
+	logger := NewAlertCSVLogger(dir, newYorkLocation(t))
+	alert := sampleAlert(time.Date(2026, 4, 6, 9, 41, 0, 0, time.FixedZone("ET", -4*3600)), "AAPL-1", "AAPL", 62.3)
+
+	if err := logger.Append(alert); err != nil {
+		t.Fatalf("Append(alert) error = %v", err)
+	}
+	if err := logger.DeleteDay(alert.AlertTime); err != nil {
+		t.Fatalf("DeleteDay(alert.AlertTime) error = %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "alerts_20260406.csv")); !os.IsNotExist(err) {
+		t.Fatalf("expected alerts_20260406.csv to be deleted, stat err = %v", err)
+	}
+}
+
 func readCSVRows(t *testing.T, path string) [][]string {
 	t.Helper()
 
@@ -155,17 +177,18 @@ func sampleAlert(ts time.Time, id, symbol string, score float64) flush.Alert {
 		FlushScore:              score,
 	}
 	return flush.Alert{
-		ID:          id,
-		Symbol:      symbol,
-		Name:        symbol + " Inc.",
-		Sources:     []string{"watchlist", "earnings"},
-		AlertTime:   ts,
-		SessionDate: ts.Format("2006-01-02"),
-		Price:       97.4,
-		FlushScore:  score,
-		Tier:        flush.TierForScore(score),
-		Summary:     flush.Summary(metrics),
-		Metrics:     metrics,
+		ID:             id,
+		Symbol:         symbol,
+		Name:           symbol + " Inc.",
+		Sources:        []string{"watchlist", "earnings"},
+		AlertTime:      ts,
+		SessionDate:    ts.Format("2006-01-02"),
+		Price:          97.4,
+		FlushScore:     score,
+		Tier:           flush.TierForScore(score),
+		VolumeSince4AM: 512300,
+		Summary:        flush.Summary(metrics),
+		Metrics:        metrics,
 	}
 }
 

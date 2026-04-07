@@ -19,12 +19,14 @@ type Detector struct {
 }
 
 type symbolState struct {
-	sessionKey    string
-	bars          []bars.Bar
-	vwap          VWAPAccumulator
-	lastAlertTime time.Time
-	alertsToday   int
-	lastBarEndMS  int64
+	dayKey         string
+	sessionKey     string
+	bars           []bars.Bar
+	vwap           VWAPAccumulator
+	volumeSince4AM float64
+	lastAlertTime  time.Time
+	alertsToday    int
+	lastBarEndMS   int64
 }
 
 func NewDetector(cfg config.FlushConfig, cooldownSeconds int, tz *time.Location) *Detector {
@@ -41,6 +43,14 @@ func (d *Detector) UpdateConfig(cfg config.FlushConfig, cooldownSeconds int) {
 	defer d.mu.Unlock()
 	d.cfg = cfg
 	d.cooldown = time.Duration(cooldownSeconds) * time.Second
+}
+
+func (d *Detector) Reset(cfg config.FlushConfig, cooldownSeconds int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.cfg = cfg
+	d.cooldown = time.Duration(cooldownSeconds) * time.Second
+	d.states = make(map[string]*symbolState)
 }
 
 func (d *Detector) ResetUnknownSymbols(valid map[string]struct{}) {
@@ -67,10 +77,9 @@ func (d *Detector) process(meta SymbolMeta, bar bars.Bar, allowAlert bool) *Aler
 
 	cfg := d.cfg
 	etEnd := bar.End.In(d.tz)
+	dayKey := etEnd.Format("2006-01-02")
+	volumeStart := VolumeWindowStart(etEnd)
 	sessionStart := SessionWindow(strings.ToLower(cfg.Session), etEnd)
-	if etEnd.Before(sessionStart) {
-		return nil
-	}
 
 	st := d.states[meta.Symbol]
 	if st == nil {
@@ -79,14 +88,31 @@ func (d *Detector) process(meta SymbolMeta, bar bars.Bar, allowAlert bool) *Aler
 	}
 
 	sessionKey := fmt.Sprintf("%s|%s", etEnd.Format("2006-01-02"), strings.ToLower(cfg.Session))
-	if st.sessionKey != sessionKey {
-		*st = symbolState{sessionKey: sessionKey}
+	if st.dayKey != dayKey {
+		*st = symbolState{
+			dayKey:     dayKey,
+			sessionKey: sessionKey,
+		}
+	} else if st.sessionKey != sessionKey {
+		st.sessionKey = sessionKey
+		st.bars = nil
+		st.vwap.Reset()
+		st.lastAlertTime = time.Time{}
+		st.alertsToday = 0
+		st.lastBarEndMS = 0
 	}
 
 	if st.lastBarEndMS == bar.End.UnixMilli() {
 		return nil
 	}
 	st.lastBarEndMS = bar.End.UnixMilli()
+
+	if !etEnd.Before(volumeStart) {
+		st.volumeSince4AM += bar.Volume
+	}
+	if etEnd.Before(sessionStart) {
+		return nil
+	}
 	st.bars = append(st.bars, bar)
 	if len(st.bars) > 390 {
 		st.bars = st.bars[len(st.bars)-390:]
@@ -113,6 +139,9 @@ func (d *Detector) process(meta SymbolMeta, bar bars.Bar, allowAlert bool) *Aler
 	if metrics.FlushScore < cfg.MinAlertScore {
 		return nil
 	}
+	if st.volumeSince4AM < cfg.MinVolumeSince4AM {
+		return nil
+	}
 	if d.cooldown > 0 && !st.lastAlertTime.IsZero() && etEnd.Before(st.lastAlertTime.Add(d.cooldown)) {
 		return nil
 	}
@@ -124,17 +153,18 @@ func (d *Detector) process(meta SymbolMeta, bar bars.Bar, allowAlert bool) *Aler
 	st.alertsToday++
 
 	return &Alert{
-		ID:          fmt.Sprintf("%s-%d", meta.Symbol, bar.End.UnixMilli()),
-		Symbol:      meta.Symbol,
-		Name:        meta.Name,
-		Sources:     append([]string(nil), meta.Sources...),
-		AlertTime:   etEnd,
-		SessionDate: etEnd.Format("2006-01-02"),
-		Price:       round1(bar.Close),
-		FlushScore:  metrics.FlushScore,
-		Tier:        TierForScore(metrics.FlushScore),
-		Summary:     Summary(metrics),
-		Metrics:     metrics,
+		ID:             fmt.Sprintf("%s-%d", meta.Symbol, bar.End.UnixMilli()),
+		Symbol:         meta.Symbol,
+		Name:           meta.Name,
+		Sources:        append([]string(nil), meta.Sources...),
+		AlertTime:      etEnd,
+		SessionDate:    etEnd.Format("2006-01-02"),
+		Price:          round1(bar.Close),
+		FlushScore:     metrics.FlushScore,
+		Tier:           TierForScore(metrics.FlushScore),
+		VolumeSince4AM: round1(st.volumeSince4AM),
+		Summary:        Summary(metrics),
+		Metrics:        metrics,
 	}
 }
 

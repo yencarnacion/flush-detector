@@ -2,3 +2,4 @@
 go.sum
 .codex
 log
+state.json

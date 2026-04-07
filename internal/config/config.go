@@ -43,6 +43,7 @@ type FlushConfig struct {
 	Session                   string  `yaml:"session" json:"session"`
 	StartTime                 string  `yaml:"start_time" json:"start_time"`
 	EndTime                   string  `yaml:"end_time" json:"end_time"`
+	MinVolumeSince4AM         float64 `yaml:"min_volume_since_4am" json:"min_volume_since_4am"`
 	MinBarsBeforeAlerts       int     `yaml:"min_bars_before_alerts" json:"min_bars_before_alerts"`
 	MinAlertScore             float64 `yaml:"min_alert_score" json:"min_alert_score"`
 	BackfillBars              int     `yaml:"backfill_bars" json:"backfill_bars"`
@@ -93,6 +94,7 @@ func Default() Config {
 			Session:                   "rth",
 			StartTime:                 "09:40",
 			EndTime:                   "15:30",
+			MinVolumeSince4AM:         500_000,
 			MinBarsBeforeAlerts:       10,
 			MinAlertScore:             60,
 			BackfillBars:              60,
@@ -172,6 +174,9 @@ func (c *Config) Normalize() {
 	}
 	if strings.TrimSpace(c.Flush.EndTime) == "" {
 		c.Flush.EndTime = def.Flush.EndTime
+	}
+	if c.Flush.MinVolumeSince4AM <= 0 {
+		c.Flush.MinVolumeSince4AM = def.Flush.MinVolumeSince4AM
 	}
 	if c.Flush.MinBarsBeforeAlerts <= 0 {
 		c.Flush.MinBarsBeforeAlerts = def.Flush.MinBarsBeforeAlerts

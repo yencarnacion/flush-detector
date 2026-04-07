@@ -96,6 +96,11 @@ func (h *Hub) AddAlert(alert flush.Alert) {
 	h.Broadcast("flush_alert", alert)
 }
 
+func (h *Hub) ReplaceHistory(alerts []flush.Alert) {
+	h.SetHistory(alerts)
+	h.Broadcast("history", h.History())
+}
+
 func (h *Hub) Broadcast(messageType string, payload any) {
 	msg, err := json.Marshal(Envelope{Type: messageType, Payload: payload})
 	if err != nil {

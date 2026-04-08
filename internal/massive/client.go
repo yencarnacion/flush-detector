@@ -2,6 +2,7 @@ package massive
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
@@ -80,6 +81,10 @@ func (c *Client) run(ctx context.Context, out chan<- bars.Bar) {
 			return
 		case err := <-c.ws.Error():
 			if err == nil {
+				continue
+			}
+			if isTransientWSError(err) {
+				c.log.Debug("massive websocket transient disconnect", "error", err)
 				continue
 			}
 			c.status("massive websocket error")
@@ -255,20 +260,52 @@ type wsLogger struct {
 
 func (w wsLogger) Debugf(template string, args ...any) {
 	if w.log != nil {
-		w.log.Debug(template, "args", args)
+		w.log.Debug(formatLogTemplate(template, args...))
 	}
 }
 
 func (w wsLogger) Infof(template string, args ...any) {
 	if w.log != nil {
-		w.log.Info(template, "args", args)
+		if isForceDisconnectStatus(template, args) {
+			detail := ""
+			if len(args) > 1 {
+				detail = fmt.Sprint(args[1])
+			}
+			w.log.Debug("massive websocket forced disconnect", "detail", detail)
+			return
+		}
+		w.log.Info(formatLogTemplate(template, args...))
 	}
 }
 
 func (w wsLogger) Errorf(template string, args ...any) {
 	if w.log != nil {
-		w.log.Error(template, "args", args)
+		if isTransientWSError(formatLogTemplate(template, args...)) {
+			w.log.Debug("massive websocket transient disconnect", "error", formatLogTemplate(template, args...))
+			return
+		}
+		w.log.Error(formatLogTemplate(template, args...))
 	}
+}
+
+func formatLogTemplate(template string, args ...any) string {
+	if len(args) == 0 {
+		return template
+	}
+	return fmt.Sprintf(template, args...)
+}
+
+func isForceDisconnectStatus(template string, args []any) bool {
+	if !strings.Contains(template, "unknown status message") || len(args) == 0 {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(fmt.Sprint(args[0])), "force_disconnect")
+}
+
+func isTransientWSError(v any) bool {
+	msg := strings.ToLower(fmt.Sprint(v))
+	return strings.Contains(msg, "websocket: close 1012") ||
+		strings.Contains(msg, "forcefully disconnected")
 }
 
 func derefFloat(v *float64) float64 {

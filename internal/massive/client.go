@@ -3,6 +3,7 @@ package massive
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -192,6 +193,48 @@ func (c *Client) BackfillBars(ctx context.Context, symbol string, from, to time.
 	return out, nil
 }
 
+func (c *Client) AvailableDates(ctx context.Context, symbol string, from, to time.Time) ([]string, error) {
+	params := &gen.GetStocksAggregatesParams{
+		Adjusted: massiverest.Ptr(true),
+		Sort:     massiverest.String("asc"),
+		Limit:    massiverest.Int(maxTradingDaysEstimate(from, to)),
+	}
+	resp, err := c.rest.GetStocksAggregatesWithResponse(
+		ctx,
+		strings.ToUpper(symbol),
+		1,
+		gen.GetStocksAggregatesParamsTimespan("day"),
+		from.Format("2006-01-02"),
+		to.Format("2006-01-02"),
+		params,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if err := massiverest.CheckResponse(resp); err != nil {
+		return nil, err
+	}
+	if resp.JSON200 == nil || resp.JSON200.Results == nil {
+		return nil, nil
+	}
+
+	seen := make(map[string]struct{}, len(*resp.JSON200.Results))
+	for _, item := range *resp.JSON200.Results {
+		if item.V <= 0 {
+			continue
+		}
+		day := time.UnixMilli(int64(item.Timestamp)).UTC().Format("2006-01-02")
+		seen[day] = struct{}{}
+	}
+
+	out := make([]string, 0, len(seen))
+	for day := range seen {
+		out = append(out, day)
+	}
+	slices.Sort(out)
+	return out, nil
+}
+
 func (c *Client) TickerDetails(ctx context.Context, symbol string) (name string, err error) {
 	resp, err := c.rest.GetTickerWithResponse(ctx, symbol, nil)
 	if err != nil {
@@ -233,4 +276,15 @@ func derefFloat(v *float64) float64 {
 		return 0
 	}
 	return *v
+}
+
+func maxTradingDaysEstimate(from, to time.Time) int {
+	if to.Before(from) {
+		return 1
+	}
+	days := int(to.Sub(from)/(24*time.Hour)) + 8
+	if days < 8 {
+		return 8
+	}
+	return days
 }

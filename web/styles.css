@@ -161,6 +161,188 @@ h2 {
   justify-content: flex-start;
 }
 
+.replay-panel {
+  margin-top: 20px;
+  padding: 18px;
+  border-radius: 22px;
+  border: 1px solid var(--line);
+  background:
+    linear-gradient(180deg, rgba(255, 248, 239, 0.92), rgba(247, 239, 228, 0.9)),
+    radial-gradient(circle at top right, rgba(12, 123, 89, 0.08), transparent 32%);
+}
+
+.replay-head,
+.replay-toolbar,
+.replay-legend {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.replay-eyebrow {
+  margin-bottom: 6px;
+}
+
+.replay-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.replay-toolbar {
+  margin-top: 16px;
+}
+
+.replay-month-label {
+  min-width: 180px;
+  text-align: center;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.month-nav {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 9px 14px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.month-nav:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.replay-legend {
+  margin-top: 12px;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.legend-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: inline-block;
+  border: 1px solid transparent;
+}
+
+.legend-swatch.available {
+  background: rgba(12, 123, 89, 0.18);
+  border-color: rgba(12, 123, 89, 0.35);
+}
+
+.legend-swatch.selected {
+  background: rgba(191, 90, 42, 0.18);
+  border-color: rgba(191, 90, 42, 0.4);
+}
+
+.legend-swatch.active {
+  background: rgba(29, 43, 40, 0.14);
+  border-color: rgba(29, 43, 40, 0.26);
+}
+
+.replay-calendar {
+  margin-top: 16px;
+}
+
+.replay-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.replay-weekday {
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-weight: 700;
+}
+
+.replay-day {
+  min-height: 86px;
+  padding: 10px;
+  border-radius: 18px;
+  border: 1px solid rgba(29, 43, 40, 0.08);
+  background: rgba(255, 255, 255, 0.58);
+  color: var(--muted);
+  text-align: left;
+  font: inherit;
+}
+
+.replay-day.empty {
+  border-style: dashed;
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.replay-day.enabled {
+  cursor: pointer;
+  color: var(--ink);
+  background: linear-gradient(180deg, rgba(232, 247, 240, 0.88), rgba(255, 255, 255, 0.68));
+  border-color: rgba(12, 123, 89, 0.22);
+}
+
+.replay-day.enabled:hover {
+  transform: translateY(-1px);
+  border-color: rgba(12, 123, 89, 0.42);
+}
+
+.replay-day.selected {
+  background: linear-gradient(180deg, rgba(255, 235, 220, 0.96), rgba(255, 247, 240, 0.84));
+  border-color: rgba(191, 90, 42, 0.42);
+  box-shadow: inset 0 0 0 1px rgba(191, 90, 42, 0.18);
+}
+
+.replay-day.active {
+  box-shadow: inset 0 0 0 1px rgba(29, 43, 40, 0.2);
+}
+
+.replay-day-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.replay-day-number {
+  font-family: var(--trader-mono);
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.replay-day-flag {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(29, 43, 40, 0.08);
+  color: var(--ink);
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.replay-day-meta {
+  margin-top: 18px;
+  font-size: 0.82rem;
+  color: inherit;
+}
+
+.replay-empty {
+  padding: 18px;
+  border-radius: 16px;
+  border: 1px dashed var(--line);
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.48);
+}
+
 .sound-status {
   min-width: 250px;
   padding: 10px 12px;
@@ -530,6 +712,13 @@ select {
   border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
+.detail-metric-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .detail-metric-label {
   display: block;
   color: rgba(237, 245, 251, 0.56);
@@ -545,6 +734,63 @@ select {
   font-size: 0.98rem;
   font-weight: 700;
   letter-spacing: -0.03em;
+}
+
+.detail-metric-band {
+  display: block;
+  margin-top: 4px;
+  color: rgba(237, 245, 251, 0.62);
+  font-size: 0.74rem;
+  line-height: 1.2;
+}
+
+.detail-metric-score {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-family: var(--trader-mono);
+  font-size: 0.86rem;
+  font-weight: 700;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.detail-metric.scored {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.035));
+}
+
+.detail-metric.metric-score-1 .detail-metric-score {
+  color: #a9bbca;
+  background: rgba(169, 187, 202, 0.12);
+  border-color: rgba(169, 187, 202, 0.2);
+}
+
+.detail-metric.metric-score-2 .detail-metric-score {
+  color: #77c5ff;
+  background: rgba(119, 197, 255, 0.12);
+  border-color: rgba(119, 197, 255, 0.2);
+}
+
+.detail-metric.metric-score-3 .detail-metric-score {
+  color: #66d6c2;
+  background: rgba(102, 214, 194, 0.12);
+  border-color: rgba(102, 214, 194, 0.2);
+}
+
+.detail-metric.metric-score-4 .detail-metric-score {
+  color: #f2c14e;
+  background: rgba(242, 193, 78, 0.12);
+  border-color: rgba(242, 193, 78, 0.2);
+}
+
+.detail-metric.metric-score-5 .detail-metric-score {
+  color: #ff6b57;
+  background: rgba(255, 107, 87, 0.12);
+  border-color: rgba(255, 107, 87, 0.2);
 }
 
 .detail-summary {
@@ -618,13 +864,28 @@ select {
   .hero,
   .controls-row,
   .watchlist-strip,
-  .section-head {
+  .section-head,
+  .replay-head,
+  .replay-toolbar {
     flex-direction: column;
     align-items: stretch;
   }
 
   .hero-status {
     justify-items: start;
+  }
+
+  .replay-actions {
+    justify-content: stretch;
+  }
+
+  .replay-actions .action,
+  .month-nav {
+    width: 100%;
+  }
+
+  .replay-month-label {
+    min-width: 0;
   }
 
   .alerts-board,
@@ -640,6 +901,20 @@ select {
 @media (max-width: 700px) {
   .minute-feed {
     max-height: none;
+  }
+
+  .replay-calendar-grid {
+    gap: 8px;
+  }
+
+  .replay-day {
+    min-height: 74px;
+    padding: 8px;
+  }
+
+  .replay-day-meta {
+    margin-top: 12px;
+    font-size: 0.74rem;
   }
 
   .detail-alert-header {

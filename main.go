@@ -42,10 +42,14 @@ type App struct {
 	watchlist  []watchlist.Symbol
 	watchIndex map[string]watchlist.Symbol
 
-	processMu     sync.Mutex
-	replayStateMu sync.Mutex
-	replaying     bool
-	deferredBars  []bars.Bar
+	processMu      sync.Mutex
+	replayStateMu  sync.Mutex
+	replaying      bool
+	historicalMode bool
+	replayDate     string
+
+	calendarMu          sync.Mutex
+	replayCalendarCache map[string]replayCalendarCacheEntry
 
 	barCh    chan bars.Bar
 	hub      *webui.Hub
@@ -58,10 +62,13 @@ type App struct {
 }
 
 type statusPayload struct {
-	Text      string `json:"text"`
-	UpdatedAt string `json:"updated_at"`
-	Symbols   int    `json:"symbols"`
-	Alerts    int    `json:"alerts"`
+	Text       string `json:"text"`
+	UpdatedAt  string `json:"updated_at"`
+	Symbols    int    `json:"symbols"`
+	Alerts     int    `json:"alerts"`
+	Mode       string `json:"mode"`
+	ReplayDate string `json:"replay_date,omitempty"`
+	Replaying  bool   `json:"replaying"`
 }
 
 type extraPayload struct {
@@ -75,6 +82,12 @@ type liveApplyRequest struct {
 	Flush config.FlushConfig `json:"flush"`
 	Alert config.AlertConfig `json:"alert"`
 }
+
+const (
+	startupWarmupTimeout = 20 * time.Second
+	reloadWarmupTimeout  = 20 * time.Second
+	resumeWarmupTimeout  = 30 * time.Second
+)
 
 func main() {
 	_ = godotenv.Load()
@@ -106,17 +119,18 @@ func main() {
 	defer cancel()
 
 	app := &App{
-		log:            logger,
-		tz:             tz,
-		watchlistPaths: watchlistPaths,
-		cfg:            cfg,
-		watchlist:      items,
-		watchIndex:     watchlist.ByTicker(items),
-		barCh:          make(chan bars.Bar, 4096),
-		hub:            webui.NewHub(logger, 200),
-		store:          persistence.New(cfg.Persistence.StateFile),
-		alertLog:       persistence.NewAlertCSVLogger("log", tz),
-		detector:       flush.NewDetector(cfg.Flush, cfg.Alert.CooldownSeconds, tz),
+		log:                 logger,
+		tz:                  tz,
+		watchlistPaths:      watchlistPaths,
+		cfg:                 cfg,
+		watchlist:           items,
+		watchIndex:          watchlist.ByTicker(items),
+		barCh:               make(chan bars.Bar, 4096),
+		hub:                 webui.NewHub(logger, 200),
+		store:               persistence.New(cfg.Persistence.StateFile),
+		alertLog:            persistence.NewAlertCSVLogger("log", tz),
+		detector:            flush.NewDetector(cfg.Flush, cfg.Alert.CooldownSeconds, tz),
+		replayCalendarCache: make(map[string]replayCalendarCacheEntry),
 	}
 
 	if state, err := app.store.Load(); err == nil {
@@ -139,13 +153,11 @@ func main() {
 
 	go app.runDetector(ctx)
 
-	app.setStatus("warming up")
-	app.warmup(ctx, watchlist.Symbols(items))
-
 	if err := app.massive.Connect(ctx, watchlist.Symbols(items), app.barCh); err != nil {
 		panic(err)
 	}
 	app.setStatus("live")
+	app.startWarmup("startup", startupWarmupTimeout, watchlist.Symbols(items))
 
 	server := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.ServerPort),
@@ -204,7 +216,9 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("GET /api/watchlist", a.handleWatchlist)
 	mux.HandleFunc("POST /api/watchlist/reload", a.handleWatchlistReload)
 	mux.HandleFunc("GET /api/history", a.handleHistory)
+	mux.HandleFunc("GET /api/replay-calendar", a.handleReplayCalendar)
 	mux.HandleFunc("POST /api/replay-day", a.handleReplayDay)
+	mux.HandleFunc("POST /api/replay-live", a.handleReplayLive)
 	mux.HandleFunc("GET /api/extra", a.handleExtra)
 
 	mux.HandleFunc("GET /alert.wav", a.soundHandler(func(cfg config.Config) string { return cfg.Alert.SoundFile }, 660))
@@ -258,6 +272,9 @@ func (a *App) warmup(ctx context.Context, symbols []string) {
 
 			barsList, err := a.massive.BackfillBars(ctx, symbol, from, to, limit)
 			if err != nil {
+				if ctx.Err() != nil {
+					return
+				}
 				a.log.Warn("warmup backfill failed", "symbol", symbol, "error", err)
 				return
 			}
@@ -275,6 +292,20 @@ func (a *App) warmup(ctx context.Context, symbols []string) {
 		}()
 	}
 	wg.Wait()
+}
+
+func (a *App) startWarmup(reason string, timeout time.Duration, symbols []string) {
+	if len(symbols) == 0 {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		a.warmup(ctx, symbols)
+		if err := ctx.Err(); err != nil && err != context.Canceled && err != context.DeadlineExceeded {
+			a.log.Warn("warmup ended", "reason", reason, "error", err)
+		}
+	}()
 }
 
 func (a *App) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -297,14 +328,63 @@ func (a *App) handleHistory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"alerts": a.hub.History()})
 }
 
+func (a *App) handleReplayCalendar(w http.ResponseWriter, r *http.Request) {
+	month, err := parseReplayMonth(r.URL.Query().Get("month"), a.tz, time.Now())
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	payload, err := a.replayCalendar(ctx, month)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
 func (a *App) handleReplayDay(w http.ResponseWriter, r *http.Request) {
-	if !a.beginReplay() {
+	var req replayDayRequest
+	if err := decodeOptionalJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+
+	day, err := parseReplayDate(req.Date, a.tz, time.Now())
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+
+	if !a.beginHistoricalReplay(day) {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "replay already running"})
 		return
 	}
 
-	go a.replayDay()
-	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "status": "replay_day_started"})
+	go a.replayDay(day)
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"ok":          true,
+		"status":      "replay_day_started",
+		"replay_date": replayDateKey(day, a.tz),
+	})
+}
+
+func (a *App) handleReplayLive(w http.ResponseWriter, r *http.Request) {
+	state := a.snapshotReplayState()
+	if !state.historicalMode && !state.replaying {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": "already_live"})
+		return
+	}
+	if !a.beginResumeLive() {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "replay already running"})
+		return
+	}
+
+	go a.resumeLive()
+	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "status": "resume_live_started"})
 }
 
 func (a *App) handleWatchlistReload(w http.ResponseWriter, r *http.Request) {
@@ -317,6 +397,7 @@ func (a *App) handleWatchlistReload(w http.ResponseWriter, r *http.Request) {
 	a.watchlist = items
 	a.watchIndex = watchlist.ByTicker(items)
 	a.mu.Unlock()
+	a.invalidateReplayCalendarCache()
 
 	valid := make(map[string]struct{}, len(items))
 	for _, item := range items {
@@ -331,7 +412,7 @@ func (a *App) handleWatchlistReload(w http.ResponseWriter, r *http.Request) {
 
 	a.hub.SetWatchlist(items)
 	a.setStatus("watchlist reloaded")
-	go a.warmup(context.Background(), watchlist.Symbols(items))
+	a.startWarmup("watchlist reload", reloadWarmupTimeout, watchlist.Symbols(items))
 
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "watchlist": items})
 }
@@ -437,48 +518,6 @@ func (a *App) currentConfig() config.Config {
 	return a.cfg
 }
 
-func (a *App) beginReplay() bool {
-	a.replayStateMu.Lock()
-	defer a.replayStateMu.Unlock()
-	if a.replaying {
-		return false
-	}
-	a.replaying = true
-	a.deferredBars = nil
-	return true
-}
-
-func (a *App) stopReplay() {
-	a.replayStateMu.Lock()
-	a.replaying = false
-	a.deferredBars = nil
-	a.replayStateMu.Unlock()
-}
-
-func (a *App) queueReplayBar(bar bars.Bar) bool {
-	a.replayStateMu.Lock()
-	defer a.replayStateMu.Unlock()
-	if !a.replaying {
-		return false
-	}
-	a.deferredBars = append(a.deferredBars, bar)
-	return true
-}
-
-func (a *App) popDeferredBarsOrFinishReplay() ([]bars.Bar, bool) {
-	a.replayStateMu.Lock()
-	defer a.replayStateMu.Unlock()
-
-	if len(a.deferredBars) == 0 {
-		a.replaying = false
-		return nil, true
-	}
-
-	out := append([]bars.Bar(nil), a.deferredBars...)
-	a.deferredBars = nil
-	return out, false
-}
-
 func (a *App) currentWatchlist() []watchlist.Symbol {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -495,11 +534,19 @@ func (a *App) lookupSymbol(symbol string) (watchlist.Symbol, bool) {
 }
 
 func (a *App) setStatus(text string) {
+	state := a.snapshotReplayState()
+	mode := "live"
+	if state.historicalMode {
+		mode = "historical"
+	}
 	a.hub.SetStatus(statusPayload{
-		Text:      text,
-		UpdatedAt: time.Now().In(a.tz).Format(time.RFC3339),
-		Symbols:   len(a.currentWatchlist()),
-		Alerts:    len(a.hub.History()),
+		Text:       text,
+		UpdatedAt:  time.Now().In(a.tz).Format(time.RFC3339),
+		Symbols:    len(a.currentWatchlist()),
+		Alerts:     len(a.hub.History()),
+		Mode:       mode,
+		ReplayDate: state.replayDate,
+		Replaying:  state.replaying,
 	})
 }
 
@@ -508,57 +555,48 @@ func (a *App) handleLiveBar(bar bars.Bar) {
 	if !ok {
 		return
 	}
-	if a.queueReplayBar(bar) {
+	if a.suppressLiveProcessing() {
 		return
 	}
 
 	a.processMu.Lock()
 	defer a.processMu.Unlock()
-
-	if a.queueReplayBar(bar) {
-		return
-	}
 	if a.processBarLocked(symbolMeta(meta), bar, true) {
 		a.setStatus("live")
 	}
 }
 
-func (a *App) replayDay() {
-	nowET := time.Now().In(a.tz)
-	from := flush.VolumeWindowStart(nowET)
-	if nowET.Before(from) {
-		a.stopReplay()
-		a.setStatus("replay unavailable before 04:00 ET")
+func (a *App) replayDay(day time.Time) {
+	from, to := replayDayRange(day, time.Now(), a.tz)
+	a.setStatus("historical replay loading")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+
+	allBars := a.backfillDayBars(ctx, watchlist.Symbols(a.currentWatchlist()), from, to)
+	if ctx.Err() != nil {
+		a.log.Error("historical replay backfill context", "error", ctx.Err(), "replay_date", replayDateKey(day, a.tz))
+		a.failHistoricalReplay()
+		a.setStatus("historical replay failed")
+		return
+	}
+	if len(allBars) == 0 {
+		a.failHistoricalReplay()
+		a.setStatus("historical replay unavailable")
 		return
 	}
 
 	cfg := a.currentConfig()
 	a.processMu.Lock()
-	if err := a.resetReplayStateLocked(nowET, cfg); err != nil {
-		a.processMu.Unlock()
-		a.log.Error("reset replay day state", "error", err)
-		a.stopReplay()
-		a.setStatus("replay failed")
-		return
-	}
-	a.processMu.Unlock()
-	a.setStatus("replay day loading")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-	defer cancel()
-
-	allBars := a.backfillDayBars(ctx, watchlist.Symbols(a.currentWatchlist()), from, nowET)
-	if ctx.Err() != nil {
-		a.log.Error("replay day backfill context", "error", ctx.Err())
-		a.stopReplay()
-		a.setStatus("replay failed")
-		return
-	}
-
-	a.processMu.Lock()
 	defer a.processMu.Unlock()
+	if err := a.resetHistoricalReplayLocked(day, cfg); err != nil {
+		a.log.Error("reset historical replay state", "error", err, "replay_date", replayDateKey(day, a.tz))
+		a.failHistoricalReplay()
+		a.setStatus("historical replay failed")
+		return
+	}
 
-	a.setStatus("replay day processing")
+	a.setStatus("historical replay processing")
 	for _, bar := range allBars {
 		meta, ok := a.lookupSymbol(bar.Symbol)
 		if !ok {
@@ -566,38 +604,34 @@ func (a *App) replayDay() {
 		}
 		a.processBarLocked(symbolMeta(meta), bar, false)
 	}
-	if err := a.store.SaveAlerts(a.hub.History()); err != nil {
-		a.log.Warn("save replay day state", "error", err)
-	}
-
-	for {
-		deferred, done := a.popDeferredBarsOrFinishReplay()
-		if done {
-			break
-		}
-		sortBarsChronological(deferred)
-		for _, bar := range deferred {
-			meta, ok := a.lookupSymbol(bar.Symbol)
-			if !ok {
-				continue
-			}
-			a.processBarLocked(symbolMeta(meta), bar, false)
-		}
-		if err := a.store.SaveAlerts(a.hub.History()); err != nil {
-			a.log.Warn("save replay day deferred state", "error", err)
-		}
-	}
-
-	a.setStatus("live")
+	a.finishHistoricalReplay(day)
+	a.setStatus("historical replay ready")
 }
 
-func (a *App) resetReplayStateLocked(day time.Time, cfg config.Config) error {
-	a.detector.Reset(cfg.Flush, cfg.Alert.CooldownSeconds)
-	a.hub.ReplaceHistory(nil)
-	if err := a.store.SaveAlerts(nil); err != nil {
-		return err
+func (a *App) resumeLive() {
+	a.setStatus("resuming live")
+
+	state, err := a.store.Load()
+	if err != nil {
+		a.log.Warn("load live state during resume", "error", err)
 	}
-	return a.alertLog.DeleteDay(day)
+
+	cfg := a.currentConfig()
+	a.processMu.Lock()
+	a.detector.Reset(cfg.Flush, cfg.Alert.CooldownSeconds)
+	a.processMu.Unlock()
+
+	a.hub.ReplaceHistory(state.Alerts)
+
+	ctx, cancel := context.WithTimeout(context.Background(), resumeWarmupTimeout)
+	defer cancel()
+	a.warmup(ctx, watchlist.Symbols(a.currentWatchlist()))
+	if err := ctx.Err(); err != nil && err != context.DeadlineExceeded && err != context.Canceled {
+		a.log.Warn("live warmup during resume", "error", ctx.Err())
+	}
+
+	a.finishResumeLive()
+	a.setStatus("live")
 }
 
 func (a *App) processBarLocked(meta flush.SymbolMeta, bar bars.Bar, persistState bool) bool {
@@ -650,7 +684,12 @@ func (a *App) backfillDayBars(ctx context.Context, symbols []string, from, to ti
 
 	allBars := make([]bars.Bar, 0, len(symbols)*limit)
 	for barsList := range results {
-		allBars = append(allBars, barsList...)
+		for _, bar := range barsList {
+			if bar.End.Before(from) || bar.End.After(to) {
+				continue
+			}
+			allBars = append(allBars, bar)
+		}
 	}
 	sortBarsChronological(allBars)
 	return allBars
@@ -682,6 +721,18 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func decodeOptionalJSON(r *http.Request, dst any) error {
+	defer r.Body.Close()
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil
+	}
+	return json.Unmarshal(data, dst)
 }
 
 func max(values ...int) int {

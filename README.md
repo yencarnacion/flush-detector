@@ -13,6 +13,7 @@
 - Emits live browser alerts with score tiers, metric breakdown, news, and SEC filings
 - Appends each triggered alert to a daily CSV log under `./log/alerts_YYYYMMDD.csv`
 - Replays recent alert history to new websocket clients
+- Supports historical day replay from the UI with per-day calendar selection
 - Supports watchlist reload without restarting
 - Supports live threshold/window changes from the UI
 
@@ -128,16 +129,31 @@ Tier labels:
 - `75-89`: Strong
 - `90-100`: Extreme
 
+Browser-only metric bands:
+
+The alert card UI also assigns each flush metric a `1-5` severity score. That banding is UI-only: it does not change the raw metric values in websocket payloads or the CSV log output under `./log`.
+
+| Metric | 1 | 2 | 3 | 4 | 5 |
+| --- | --- | --- | --- | --- | --- |
+| Drop from prior 30m high | `< 1.0%` noise | `1.0% to < 2.0%` pullback | `2.0% to < 3.0%` flush | `3.0% to 4.0%` hard flush | `> 4.0%` washout |
+| Distance below VWAP | `< 0.5%` near value | `0.5% to < 1.0%` weak | `1.0% to < 2.0%` stretched | `2.0% to 3.0%` deeply stretched | `> 3.0%` dislocated |
+| 5m downside ROC | `< 0.3%` slow | `0.3% to < 0.7%` selling | `0.7% to < 1.2%` aggressive selling | `1.2% to 1.8%` flush impulse | `> 1.8%` panic burst |
+| 10m downside ROC | `< 0.5%` drift | `0.5% to < 1.0%` sustained weakness | `1.0% to < 2.0%` strong pressure | `2.0% to 3.0%` trend flush | `> 3.0%` one-sided pressure |
+| 20m downside slope | `< 0.03% / bar` drift | `0.03% to < 0.07% / bar` controlled bleed | `0.07% to < 0.12% / bar` trend pressure | `0.12% to 0.18% / bar` heavy pressure | `> 0.18% / bar` relentless trend |
+| Range expansion | `<= x1.0` normal | `> x1.0 to < x1.3` building | `x1.3 to < x1.6` expanding | `x1.6 to x2.0` emotional | `> x2.0` washout-like |
+| Volume expansion | `<= x1.0` routine | `> x1.0 to < x1.5` active | `x1.5 to < x2.0` crowded | `x2.0 to x3.0` forced | `> x3.0` capitulation-like |
+
 ## Browser UI
 
 The UI provides:
 
 - pinned alerts
 - live stream
-- history pane
+- historical replay calendar with month navigation
 - websocket connection/status banner
 - search/filter by ticker or name
 - sort by time or score
+- per-metric `1-5` severity badges on alert cards
 - sound toggle
 - live settings apply
 - chart open button
@@ -154,6 +170,9 @@ The UI provides:
 - `GET /api/watchlist`
 - `POST /api/watchlist/reload`
 - `GET /api/history`
+- `GET /api/replay-calendar?month=YYYY-MM`
+- `POST /api/replay-day`
+- `POST /api/replay-live`
 - `GET /api/extra?ticker=XYZ&date=YYYY-MM-DD&days=2`
 - `GET /alert.wav`
 - `GET /alert-up.wav`
@@ -177,5 +196,6 @@ make build
 - Massive is used as the market-data foundation through the official Go v3 client.
 - Startup backfill uses Massive REST aggregates.
 - Live streaming uses Massive stock minute aggregate websocket subscriptions.
+- Historical replay rewrites `./log/alerts_YYYYMMDD.csv` for the replayed session date before regenerating alerts for that day.
 - News and SEC filings are loaded on demand for each alert card and cached server-side.
 - Triggered alerts are also written to one CSV file per day in `./log`. The CSV includes alert time, symbol, score, tier, price, source tags, cumulative 04:00 ET volume, and the core flush metrics, but it does not include news or SEC filing enrichment.

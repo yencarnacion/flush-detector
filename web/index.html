@@ -39,7 +39,6 @@
               <span id="soundStateBadge" class="sound-badge blocked">Click To Enable</span>
               <div id="soundStateText" class="sound-text">Chrome usually needs one click before alert audio can play.</div>
             </div>
-            <button id="replayDayBtn" class="action ghost" type="button">Replay Day</button>
             <button id="reloadBtn" class="action" type="button">Reload Watchlists</button>
           </div>
 
@@ -70,12 +69,43 @@
             </label>
             <button id="applyBtn" class="action apply" type="button">Apply Live</button>
           </div>
+
+          <section class="replay-panel" aria-labelledby="replayHeading">
+            <div class="replay-head">
+              <div>
+                <p class="eyebrow replay-eyebrow">Historical Mode</p>
+                <h2 id="replayHeading">Replay Day</h2>
+                <p id="replaySummary" class="mini-meta">Pick a highlighted session date to rebuild alerts and overwrite that day's alert log.</p>
+              </div>
+              <div class="replay-actions">
+                <button id="returnLiveBtn" class="action ghost" type="button">Return Live</button>
+                <button id="replayDayBtn" class="action ghost" type="button">Replay Day</button>
+              </div>
+            </div>
+
+            <div class="replay-toolbar">
+              <button id="replayPrevMonthBtn" class="month-nav" type="button" aria-label="Previous month">Previous</button>
+              <div id="replayMonthLabel" class="replay-month-label">Loading...</div>
+              <button id="replayNextMonthBtn" class="month-nav" type="button" aria-label="Next month">Next</button>
+            </div>
+
+            <div class="replay-legend" aria-hidden="true">
+              <span class="legend-swatch available"></span>
+              <span>Available data</span>
+              <span class="legend-swatch selected"></span>
+              <span>Selected day</span>
+              <span class="legend-swatch active"></span>
+              <span>Current historical view</span>
+            </div>
+
+            <div id="replayCalendar" class="replay-calendar" aria-live="polite"></div>
+          </section>
         </section>
 
         <section class="watchlist-strip collapsed" id="watchlistSection">
           <button id="watchlistToggle" class="watchlist-toggle" type="button" aria-expanded="false">
             <span class="strip-label">Watchlist</span>
-            <span id="watchlistSummary" class="watchlist-summary">Loading…</span>
+            <span id="watchlistSummary" class="watchlist-summary">Loading...</span>
           </button>
           <div id="watchlistTags" class="tag-strip"></div>
         </section>

@@ -441,7 +441,7 @@ func (a *App) handleGenerateDashboard(w http.ResponseWriter, r *http.Request) {
 	dashboardFilename := fmt.Sprintf("dashboard_%s.html", dateCompact)
 	dashboardPath := filepath.Join("dashboard", dashboardFilename)
 	cfg := a.currentConfig()
-	result, err := dashboard.GenerateDashboard(csvPath, dashboardPath, cfg.UI.ChartOpenerBaseURL)
+	result, err := dashboard.GenerateDashboardWithSessionStart(csvPath, dashboardPath, cfg.UI.ChartOpenerBaseURL, cfg.Flush.StartTime)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return

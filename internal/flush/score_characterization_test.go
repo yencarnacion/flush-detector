@@ -56,11 +56,11 @@ func TestComputeMetricsHistoryThresholds(t *testing.T) {
 		if got.DownSlope20mPctPerBar != 0 {
 			t.Fatalf("DownSlope20mPctPerBar = %.1f, want 0", got.DownSlope20mPctPerBar)
 		}
-		if got.RangeExpansion != 0 {
-			t.Fatalf("RangeExpansion = %.1f, want 0", got.RangeExpansion)
+		if got.RangeExpansion != 1 {
+			t.Fatalf("RangeExpansion = %.1f, want 1", got.RangeExpansion)
 		}
-		if got.VolumeExpansion != 0 {
-			t.Fatalf("VolumeExpansion = %.1f, want 0", got.VolumeExpansion)
+		if got.VolumeExpansion != 1 {
+			t.Fatalf("VolumeExpansion = %.1f, want 1", got.VolumeExpansion)
 		}
 	})
 
@@ -77,11 +77,11 @@ func TestComputeMetricsHistoryThresholds(t *testing.T) {
 		if got.DownSlope20mPctPerBar == 0 {
 			t.Fatal("DownSlope20mPctPerBar = 0, want non-zero once ten bars exist")
 		}
-		if got.RangeExpansion != 0 {
-			t.Fatalf("RangeExpansion = %.1f, want 0 before thirteen bars", got.RangeExpansion)
+		if got.RangeExpansion != 1 {
+			t.Fatalf("RangeExpansion = %.1f, want 1 before thirteen bars", got.RangeExpansion)
 		}
-		if got.VolumeExpansion != 0 {
-			t.Fatalf("VolumeExpansion = %.1f, want 0 before thirteen bars", got.VolumeExpansion)
+		if got.VolumeExpansion != 1 {
+			t.Fatalf("VolumeExpansion = %.1f, want 1 before thirteen bars", got.VolumeExpansion)
 		}
 	})
 }

@@ -128,6 +128,55 @@ func TestDetectorRequiresVolumeSince4AM(t *testing.T) {
 	}
 }
 
+func TestDetectorCanAlertAtConfiguredStartWhenWarmupBarsExist(t *testing.T) {
+	t.Parallel()
+
+	loc := time.FixedZone("ET", -4*3600)
+	cfg := config.Default().Flush
+	cfg.MinAlertScore = 0
+	cfg.MinVolumeSince4AM = 0
+	cfg.MinBarsBeforeAlerts = 10
+	cfg.StartTime = "09:30"
+	cfg.EndTime = "15:30"
+	cfg.RequireBelowVWAP = false
+	cfg.RequireDropFromRecentHigh = false
+
+	d := NewDetector(cfg, 0, loc)
+	meta := SymbolMeta{Symbol: "AAPL"}
+
+	premarketStart := time.Date(2026, 4, 2, 9, 19, 0, 0, loc)
+	for _, bar := range sampleBarsAt(premarketStart, 10) {
+		if alert := d.Process(meta, bar); alert != nil {
+			t.Fatal("unexpected alert before start_time")
+		}
+	}
+
+	firstWindowBar := sampleBarsAt(time.Date(2026, 4, 2, 9, 29, 0, 0, loc), 1)[0]
+	alert := d.Process(meta, firstWindowBar)
+	if alert == nil {
+		t.Fatal("expected alert at configured start_time when warmup bars are present")
+	}
+	if got := alert.AlertTime.Format("15:04"); got != "09:30" {
+		t.Fatalf("alert time = %s, want 09:30", got)
+	}
+}
+
+func TestRangeAndVolumeExpansionWarmupDefaultsToNeutral(t *testing.T) {
+	t.Parallel()
+
+	window := make([]bars.Bar, 0, 12)
+	for i := 0; i < 12; i++ {
+		window = append(window, bars.Bar{High: 10.5, Low: 10, Volume: 100})
+	}
+
+	if got := RangeExpansion(window); got != 1 {
+		t.Fatalf("RangeExpansion() warmup = %f, want 1", got)
+	}
+	if got := VolumeExpansion(window); got != 1 {
+		t.Fatalf("VolumeExpansion() warmup = %f, want 1", got)
+	}
+}
+
 func sampleBars(n int) []bars.Bar {
 	loc := time.UTC
 	return sampleBarsAt(time.Date(2026, 4, 2, 9, 30, 0, 0, loc), n)

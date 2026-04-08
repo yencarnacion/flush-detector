@@ -19,6 +19,7 @@ import (
 )
 
 const timeLayout = "2006-01-02 15:04:05"
+const defaultSessionStartTime = "09:40"
 
 var nyLocation = mustLocation("America/New_York")
 
@@ -96,7 +97,13 @@ type DashboardResult struct {
 
 // GenerateDashboard renders the flush2polygon-style dashboard from a flush-detector alert CSV.
 func GenerateDashboard(inputCSVPath, outputHTMLPath, chartBaseURL string) (*DashboardResult, error) {
-	alerts, err := parseAlerts(inputCSVPath, "buy", chartBaseURL)
+	return GenerateDashboardWithSessionStart(inputCSVPath, outputHTMLPath, chartBaseURL, defaultSessionStartTime)
+}
+
+// GenerateDashboardWithSessionStart renders the dashboard and computes session-relative timing
+// using the provided HH:MM start (for example the live detector flush.start_time).
+func GenerateDashboardWithSessionStart(inputCSVPath, outputHTMLPath, chartBaseURL, sessionStartTime string) (*DashboardResult, error) {
+	alerts, err := parseAlerts(inputCSVPath, "buy", chartBaseURL, sessionStartTime)
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +177,7 @@ func convertFile(inputPath, outputDir, signalType, chartBaseURL string) (*Conver
 		return nil, fmt.Errorf("signal must be buy or sell, got %q", signalType)
 	}
 
-	alerts, err := parseAlerts(inputPath, signalType, chartBaseURL)
+	alerts, err := parseAlerts(inputPath, signalType, chartBaseURL, defaultSessionStartTime)
 	if err != nil {
 		return nil, err
 	}
@@ -213,7 +220,7 @@ func convertFile(inputPath, outputDir, signalType, chartBaseURL string) (*Conver
 	}, nil
 }
 
-func parseAlerts(path, signalType, chartBaseURL string) ([]Alert, error) {
+func parseAlerts(path, signalType, chartBaseURL, sessionStartTime string) ([]Alert, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open input file: %w", err)
@@ -300,7 +307,7 @@ func parseAlerts(path, signalType, chartBaseURL string) ([]Alert, error) {
 			SignalTimeDisplay:       alertTime.Format("03:04 PM"),
 			ScoreBucket:             scoreBucket(parseFloat(field(record, index, "flush_score"))),
 			MinutesFromOpen:         minutesFromRegularOpen(alertTime),
-			MinutesFromSessionStart: minutesFromSessionStart(alertTime),
+			MinutesFromSessionStart: minutesFromSessionStart(alertTime, sessionStartTime),
 		}
 		if alert.Name == "" {
 			alert.Name = symbol
@@ -585,8 +592,14 @@ func minutesFromRegularOpen(t time.Time) int {
 	return int(t.Sub(open).Minutes())
 }
 
-func minutesFromSessionStart(t time.Time) int {
-	start := time.Date(t.Year(), t.Month(), t.Day(), 9, 40, 0, 0, nyLocation)
+func minutesFromSessionStart(t time.Time, sessionStartHHMM string) int {
+	startHour := 9
+	startMinute := 40
+	if parsed, err := time.Parse("15:04", strings.TrimSpace(sessionStartHHMM)); err == nil {
+		startHour = parsed.Hour()
+		startMinute = parsed.Minute()
+	}
+	start := time.Date(t.Year(), t.Month(), t.Day(), startHour, startMinute, 0, 0, nyLocation)
 	return int(t.Sub(start).Minutes())
 }
 

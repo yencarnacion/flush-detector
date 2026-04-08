@@ -110,12 +110,12 @@ func (d *Detector) process(meta SymbolMeta, bar bars.Bar, allowAlert bool) *Aler
 	if !etEnd.Before(volumeStart) {
 		st.volumeSince4AM += bar.Volume
 	}
-	if etEnd.Before(sessionStart) {
-		return nil
-	}
 	st.bars = append(st.bars, bar)
 	if len(st.bars) > 390 {
 		st.bars = st.bars[len(st.bars)-390:]
+	}
+	if etEnd.Before(sessionStart) {
+		return nil
 	}
 	st.vwap.Add(bar)
 

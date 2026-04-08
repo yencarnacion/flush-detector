@@ -72,7 +72,7 @@ func Mean(values []float64) float64 {
 
 func RangeExpansion(window []bars.Bar) float64 {
 	if len(window) < 13 {
-		return 0
+		return 1
 	}
 	shortBars := window[len(window)-3:]
 	baseBars := window[len(window)-13 : len(window)-3]
@@ -89,7 +89,7 @@ func RangeExpansion(window []bars.Bar) float64 {
 
 func VolumeExpansion(window []bars.Bar) float64 {
 	if len(window) < 13 {
-		return 0
+		return 1
 	}
 	shortBars := window[len(window)-3:]
 	baseBars := window[len(window)-13 : len(window)-3]

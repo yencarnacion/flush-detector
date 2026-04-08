@@ -13,6 +13,7 @@ const replayMonthLabel = document.getElementById("replayMonthLabel");
 const replaySummary = document.getElementById("replaySummary");
 const replayCalendar = document.getElementById("replayCalendar");
 const reloadBtn = document.getElementById("reloadBtn");
+const generateDashboardBtn = document.getElementById("generateDashboardBtn");
 const applyBtn = document.getElementById("applyBtn");
 const watchlistSection = document.getElementById("watchlistSection");
 const watchlistToggle = document.getElementById("watchlistToggle");
@@ -41,6 +42,7 @@ let audioPrimed = false;
 let audioPriming = false;
 let replayDayPending = false;
 let replayResumePending = false;
+let dashboardPending = false;
 let replayMonth = calendarMonthKey(new Date());
 let selectedReplayDate = "";
 let statusState = { mode: "live", replaying: false, replay_date: "" };
@@ -214,6 +216,10 @@ function syncReplayControls() {
   returnLiveBtn.disabled = replayDayPending || replayResumePending || statusState.replaying;
   replayPrevMonthBtn.disabled = false;
   replayNextMonthBtn.disabled = replayCurrentMonthIsToday();
+  if (generateDashboardBtn) {
+    generateDashboardBtn.textContent = dashboardPending ? "Generating..." : "Generate Dashboard";
+    generateDashboardBtn.disabled = dashboardPending || statusState.replaying;
+  }
   updateReplaySummary();
 }
 
@@ -924,6 +930,37 @@ reloadBtn.addEventListener("click", async () => {
     await fetch("/api/watchlist/reload", { method: "POST" });
   } finally {
     reloadBtn.disabled = false;
+  }
+});
+
+generateDashboardBtn?.addEventListener("click", async () => {
+  dashboardPending = true;
+  syncReplayControls();
+
+  const targetDate = statusState.mode === "historical" && statusState.replay_date
+    ? statusState.replay_date
+    : todayDateKey();
+  setStatus("Generating Dashboard", `Building dashboard for ${targetDate}`);
+
+  try {
+    const res = await fetch("/api/dashboard/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ date: targetDate }),
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(payload.error || "Dashboard generation failed");
+    }
+    if (payload.dashboard_url) {
+      window.open(payload.dashboard_url, "_blank", "noopener,noreferrer");
+    }
+    setStatus("Dashboard Ready", `${payload.dashboard_file || "dashboard"} for ${payload.date || targetDate}`);
+  } catch (err) {
+    setStatus("Error", err.message);
+  } finally {
+    dashboardPending = false;
+    syncReplayControls();
   }
 });
 

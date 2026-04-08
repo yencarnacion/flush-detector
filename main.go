@@ -21,6 +21,7 @@ import (
 
 	"flush-detector/internal/bars"
 	"flush-detector/internal/config"
+	"flush-detector/internal/dashboard"
 	"flush-detector/internal/filings"
 	"flush-detector/internal/flush"
 	"flush-detector/internal/massive"
@@ -81,6 +82,10 @@ type extraPayload struct {
 type liveApplyRequest struct {
 	Flush config.FlushConfig `json:"flush"`
 	Alert config.AlertConfig `json:"alert"`
+}
+
+type dashboardGenerateRequest struct {
+	Date string `json:"date"`
 }
 
 const (
@@ -208,6 +213,7 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("GET /styles.css", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, filepath.Join("web", "styles.css"))
 	})
+	mux.Handle("GET /dashboard/", http.StripPrefix("/dashboard/", http.FileServer(http.Dir("dashboard"))))
 	mux.HandleFunc("GET /ws", a.hub.HandleWS)
 
 	mux.HandleFunc("GET /api/health", a.handleHealth)
@@ -219,6 +225,7 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("GET /api/replay-calendar", a.handleReplayCalendar)
 	mux.HandleFunc("POST /api/replay-day", a.handleReplayDay)
 	mux.HandleFunc("POST /api/replay-live", a.handleReplayLive)
+	mux.HandleFunc("POST /api/dashboard/generate", a.handleGenerateDashboard)
 	mux.HandleFunc("GET /api/extra", a.handleExtra)
 
 	mux.HandleFunc("GET /alert.wav", a.soundHandler(func(cfg config.Config) string { return cfg.Alert.SoundFile }, 660))
@@ -385,6 +392,70 @@ func (a *App) handleReplayLive(w http.ResponseWriter, r *http.Request) {
 
 	go a.resumeLive()
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "status": "resume_live_started"})
+}
+
+func (a *App) handleGenerateDashboard(w http.ResponseWriter, r *http.Request) {
+	state := a.snapshotReplayState()
+	if state.replaying {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "replay already running"})
+		return
+	}
+
+	var req dashboardGenerateRequest
+	if err := decodeOptionalJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+
+	var day time.Time
+	var err error
+	switch {
+	case strings.TrimSpace(req.Date) != "":
+		day, err = parseReplayDate(req.Date, a.tz, time.Now())
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+	case state.historicalMode && state.replayDate != "":
+		day, err = time.ParseInLocation("2006-01-02", state.replayDate, a.tz)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to parse replay date"})
+			return
+		}
+	default:
+		day = normalizeReplayDay(time.Now(), a.tz)
+	}
+
+	dateCompact := day.In(a.tz).Format("20060102")
+	dateKey := replayDateKey(day, a.tz)
+	csvPath := filepath.Join("log", fmt.Sprintf("alerts_%s.csv", dateCompact))
+	if _, err := os.Stat(csvPath); err != nil {
+		if os.IsNotExist(err) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": fmt.Sprintf("missing alert log for %s", dateKey)})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+
+	dashboardFilename := fmt.Sprintf("dashboard_%s.html", dateCompact)
+	dashboardPath := filepath.Join("dashboard", dashboardFilename)
+	cfg := a.currentConfig()
+	result, err := dashboard.GenerateDashboard(csvPath, dashboardPath, cfg.UI.ChartOpenerBaseURL)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+
+	signalCSVFilename := strings.TrimSuffix(dashboardFilename, ".html") + "_polygon_signals.csv"
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":             true,
+		"date":           dateKey,
+		"alerts":         result.AlertCount,
+		"dashboard_file": dashboardFilename,
+		"dashboard_url":  "/dashboard/" + dashboardFilename,
+		"signal_csv_url": "/dashboard/" + signalCSVFilename,
+	})
 }
 
 func (a *App) handleWatchlistReload(w http.ResponseWriter, r *http.Request) {

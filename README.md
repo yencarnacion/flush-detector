@@ -156,6 +156,7 @@ The UI provides:
 - per-metric `1-5` severity badges on alert cards
 - sound toggle
 - live settings apply
+- top-row `Generate Dashboard` action that builds a flush2polygon-style daily dashboard and opens it
 - chart open button
 - async news/SEC filings enrichment via `/api/extra`
 
@@ -173,6 +174,8 @@ The UI provides:
 - `GET /api/replay-calendar?month=YYYY-MM`
 - `POST /api/replay-day`
 - `POST /api/replay-live`
+- `POST /api/dashboard/generate` (optional JSON body: `{"date":"YYYY-MM-DD"}`)
+- `GET /dashboard/<file>`
 - `GET /api/extra?ticker=XYZ&date=YYYY-MM-DD&days=2`
 - `GET /alert.wav`
 - `GET /alert-up.wav`
@@ -197,5 +200,6 @@ make build
 - Startup backfill uses Massive REST aggregates.
 - Live streaming uses Massive stock minute aggregate websocket subscriptions.
 - Historical replay rewrites `./log/alerts_YYYYMMDD.csv` for the replayed session date before regenerating alerts for that day.
+- Dashboard generation writes `./dashboard/dashboard_YYYYMMDD.html` and `./dashboard/dashboard_YYYYMMDD_polygon_signals.csv`.
 - News and SEC filings are loaded on demand for each alert card and cached server-side.
 - Triggered alerts are also written to one CSV file per day in `./log`. The CSV includes alert time, symbol, score, tier, price, source tags, cumulative 04:00 ET volume, and the core flush metrics, but it does not include news or SEC filing enrichment.

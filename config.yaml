@@ -19,8 +19,8 @@ ui:
 flush:
   enabled: true
   session: "rth"
-  start_time: "09:40"
-  end_time: "15:30"
+  start_time: "09:30"
+  end_time: "15:50"
   min_volume_since_4am: 500000
   min_bars_before_alerts: 10
   min_alert_score: 60.0

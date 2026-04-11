@@ -30,6 +30,11 @@ flush:
   require_drop_from_recent_high: true
   max_alerts_per_symbol_per_day: 30
 
+gapper:
+  enabled: true
+  gap_percent: 4
+  lookback_days: 7
+
 news:
   enabled: true
   max_items: 5

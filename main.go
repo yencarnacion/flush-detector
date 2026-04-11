@@ -51,6 +51,8 @@ type App struct {
 
 	calendarMu          sync.Mutex
 	replayCalendarCache map[string]replayCalendarCacheEntry
+	gapperMu            sync.RWMutex
+	gapperState         gapperSnapshot
 
 	barCh    chan bars.Bar
 	hub      *webui.Hub
@@ -80,8 +82,9 @@ type extraPayload struct {
 }
 
 type liveApplyRequest struct {
-	Flush config.FlushConfig `json:"flush"`
-	Alert config.AlertConfig `json:"alert"`
+	Flush  config.FlushConfig   `json:"flush"`
+	Alert  config.AlertConfig   `json:"alert"`
+	Gapper *config.GapperConfig `json:"gapper"`
 }
 
 type dashboardGenerateRequest struct {
@@ -113,6 +116,9 @@ func main() {
 	}
 
 	logger := newLogger(cfg.Logging.Level)
+	if err := resetCacheDir("cache"); err != nil {
+		panic(err)
+	}
 	tz := config.MustLocation(cfg.Timezone)
 	watchlistPaths := watchlist.ParsePaths(watchlistsRaw)
 	items, err := watchlist.Load(watchlistPaths)
@@ -146,6 +152,7 @@ func main() {
 
 	app.hub.SetConfig(cfg)
 	app.hub.SetWatchlist(items)
+	app.clearGapperAnalysis()
 	app.setStatus("starting")
 
 	massiveClient, err := massive.New(apiKey, logger, app.setStatus)
@@ -155,6 +162,7 @@ func main() {
 	app.massive = massiveClient
 	app.news = news.New(massiveClient.REST(), cfg.News, logger, 4)
 	app.filings = filings.New(massiveClient.REST(), cfg.Filings, logger, 4)
+	app.startLiveGapperAnalysis("startup")
 
 	go app.runDetector(ctx)
 
@@ -199,6 +207,16 @@ func newLogger(level string) *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: lvl}))
 }
 
+func resetCacheDir(path string) error {
+	if strings.TrimSpace(path) == "" {
+		path = "cache"
+	}
+	if err := os.RemoveAll(path); err != nil {
+		return err
+	}
+	return os.MkdirAll(path, 0o755)
+}
+
 func (a *App) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
@@ -221,6 +239,7 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("POST /api/config/apply", a.handleApplyLive)
 	mux.HandleFunc("GET /api/watchlist", a.handleWatchlist)
 	mux.HandleFunc("POST /api/watchlist/reload", a.handleWatchlistReload)
+	mux.HandleFunc("GET /api/gappers", a.handleGappers)
 	mux.HandleFunc("GET /api/history", a.handleHistory)
 	mux.HandleFunc("GET /api/replay-calendar", a.handleReplayCalendar)
 	mux.HandleFunc("POST /api/replay-day", a.handleReplayDay)
@@ -441,7 +460,31 @@ func (a *App) handleGenerateDashboard(w http.ResponseWriter, r *http.Request) {
 	dashboardFilename := fmt.Sprintf("dashboard_%s.html", dateCompact)
 	dashboardPath := filepath.Join("dashboard", dashboardFilename)
 	cfg := a.currentConfig()
-	result, err := dashboard.GenerateDashboardWithSessionStart(csvPath, dashboardPath, cfg.UI.ChartOpenerBaseURL, cfg.Flush.StartTime)
+	dashboardInputPath := csvPath
+	if cfg.Gapper.Enabled {
+		ctx, cancel := context.WithTimeout(r.Context(), gapperAnalysisTimeout)
+		defer cancel()
+		asOf := time.Date(day.In(a.tz).Year(), day.In(a.tz).Month(), day.In(a.tz).Day(), 20, 0, 0, 0, a.tz)
+		if replayDateKey(day, a.tz) == replayDateKey(time.Now(), a.tz) {
+			asOf = time.Now().In(a.tz)
+		}
+		if err := a.ensureGapperAnalysisForDay(ctx, day, asOf, cfg); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+		filteredPath := filepath.Join("tmp", fmt.Sprintf("gapper_alerts_%s.csv", dateCompact))
+		count, err := filterAlertCSVBySymbols(csvPath, filteredPath, a.gapperSymbolSetForDay(day))
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+		if count == 0 {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": fmt.Sprintf("no gapper alerts found for %s", dateKey)})
+			return
+		}
+		dashboardInputPath = filteredPath
+	}
+	result, err := dashboard.GenerateDashboardWithSessionStart(dashboardInputPath, dashboardPath, cfg.UI.ChartOpenerBaseURL, cfg.Flush.StartTime)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -484,6 +527,7 @@ func (a *App) handleWatchlistReload(w http.ResponseWriter, r *http.Request) {
 	a.hub.SetWatchlist(items)
 	a.setStatus("watchlist reloaded")
 	a.startWarmup("watchlist reload", reloadWarmupTimeout, watchlist.Symbols(items))
+	a.startLiveGapperAnalysis("watchlist reload")
 
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "watchlist": items})
 }
@@ -497,6 +541,9 @@ func (a *App) handleApplyLive(w http.ResponseWriter, r *http.Request) {
 
 	cfg := a.currentConfig()
 	cfg.Flush = req.Flush
+	if req.Gapper != nil {
+		cfg.Gapper = *req.Gapper
+	}
 	cfg.Alert.EnableSound = req.Alert.EnableSound
 	cfg.Alert.CooldownSeconds = req.Alert.CooldownSeconds
 	cfg.Normalize()
@@ -511,6 +558,7 @@ func (a *App) handleApplyLive(w http.ResponseWriter, r *http.Request) {
 	a.detector.UpdateConfig(cfg.Flush, cfg.Alert.CooldownSeconds)
 	a.hub.SetConfig(cfg)
 	a.setStatus("live settings applied")
+	a.startLiveGapperAnalysis("settings applied")
 	writeJSON(w, http.StatusOK, cfg)
 }
 
@@ -629,6 +677,7 @@ func (a *App) handleLiveBar(bar bars.Bar) {
 	if a.suppressLiveProcessing() {
 		return
 	}
+	a.observeLiveGapperBar(meta, bar)
 
 	a.processMu.Lock()
 	defer a.processMu.Unlock()
@@ -658,6 +707,14 @@ func (a *App) replayDay(day time.Time) {
 	}
 
 	cfg := a.currentConfig()
+	if cfg.Gapper.Enabled {
+		if err := a.ensureGapperAnalysisForDay(ctx, day, to, cfg); err != nil {
+			a.log.Error("historical gapper analysis", "error", err, "replay_date", replayDateKey(day, a.tz))
+			a.failHistoricalReplay()
+			a.setStatus("historical replay failed")
+			return
+		}
+	}
 	a.processMu.Lock()
 	defer a.processMu.Unlock()
 	if err := a.resetHistoricalReplayLocked(day, cfg); err != nil {
@@ -702,13 +759,22 @@ func (a *App) resumeLive() {
 	}
 
 	a.finishResumeLive()
+	a.startLiveGapperAnalysis("resume live")
 	a.setStatus("live")
 }
 
 func (a *App) processBarLocked(meta flush.SymbolMeta, bar bars.Bar, persistState bool) bool {
+	if !a.gapperAllowsSignal(meta.Symbol, bar.End) {
+		a.detector.Seed(meta, bar)
+		return false
+	}
+
 	alert := a.detector.Process(meta, bar)
 	if alert == nil {
 		return false
+	}
+	if gap, ok := a.gapperGapForSignal(meta.Symbol, bar.End); ok {
+		alert.GapPercent = gap
 	}
 
 	a.hub.AddAlert(*alert)

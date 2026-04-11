@@ -16,6 +16,7 @@ type Config struct {
 	Persistence PersistenceConfig `yaml:"persistence" json:"persistence"`
 	UI          UIConfig          `yaml:"ui" json:"ui"`
 	Flush       FlushConfig       `yaml:"flush" json:"flush"`
+	Gapper      GapperConfig      `yaml:"gapper" json:"gapper"`
 	News        NewsConfig        `yaml:"news" json:"news"`
 	Filings     FilingsConfig     `yaml:"filings" json:"filings"`
 	Logging     LoggingConfig     `yaml:"logging" json:"logging"`
@@ -51,6 +52,12 @@ type FlushConfig struct {
 	RequireBelowVWAP          bool    `yaml:"require_below_vwap" json:"require_below_vwap"`
 	RequireDropFromRecentHigh bool    `yaml:"require_drop_from_recent_high" json:"require_drop_from_recent_high"`
 	MaxAlertsPerSymbolPerDay  int     `yaml:"max_alerts_per_symbol_per_day" json:"max_alerts_per_symbol_per_day"`
+}
+
+type GapperConfig struct {
+	Enabled      bool    `yaml:"enabled" json:"enabled"`
+	GapPercent   float64 `yaml:"gap_percent" json:"gap_percent"`
+	LookbackDays int     `yaml:"lookback_days" json:"lookback_days"`
 }
 
 type NewsConfig struct {
@@ -102,6 +109,11 @@ func Default() Config {
 			RequireBelowVWAP:          true,
 			RequireDropFromRecentHigh: true,
 			MaxAlertsPerSymbolPerDay:  3,
+		},
+		Gapper: GapperConfig{
+			Enabled:      true,
+			GapPercent:   4,
+			LookbackDays: 7,
 		},
 		News: NewsConfig{
 			Enabled:         true,
@@ -193,6 +205,9 @@ func (c *Config) Normalize() {
 	if c.Flush.MaxAlertsPerSymbolPerDay <= 0 {
 		c.Flush.MaxAlertsPerSymbolPerDay = def.Flush.MaxAlertsPerSymbolPerDay
 	}
+	if c.Gapper.LookbackDays <= 0 {
+		c.Gapper.LookbackDays = def.Gapper.LookbackDays
+	}
 	if c.News.MaxItems <= 0 {
 		c.News.MaxItems = def.News.MaxItems
 	}
@@ -230,6 +245,9 @@ func (c Config) Validate() error {
 	}
 	if c.ServerPort <= 0 {
 		return fmt.Errorf("server_port must be > 0")
+	}
+	if c.Gapper.LookbackDays < 1 {
+		return fmt.Errorf("gapper.lookback_days must be >= 1")
 	}
 	return nil
 }

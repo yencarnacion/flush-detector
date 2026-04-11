@@ -60,6 +60,9 @@ func TestAlertCSVLoggerAppendCreatesDailyCSV(t *testing.T) {
 	if rows[1][17] == "" {
 		t.Fatal("summary should not be empty")
 	}
+	if rows[1][18] != "4.25" {
+		t.Fatalf("gap_percent = %q, want 4.25", rows[1][18])
+	}
 	if rows[2][0] != "TSLA-2" {
 		t.Fatalf("second alert id = %q, want TSLA-2", rows[2][0])
 	}
@@ -95,6 +98,53 @@ func TestAlertCSVLoggerAppendSplitsFilesByDay(t *testing.T) {
 	}
 	if secondDay[1][0] != "AAPL-2" {
 		t.Fatalf("second day id = %q, want AAPL-2", secondDay[1][0])
+	}
+}
+
+func TestAlertCSVLoggerAppendMigratesExistingHeader(t *testing.T) {
+	t.Parallel()
+
+	dir := filepath.Join(t.TempDir(), "log")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "alerts_20260406.csv")
+	oldHeader := alertCSVHeader[:len(alertCSVHeader)-1]
+	oldRecord := []string{"old-id", "2026-04-06 09:31:00", "2026-04-06", "OLD", "", "", "10.0", "60.0", "Candidate", "1.0", "1.0", "1.0", "1.0", "0.100", "1.0", "1.0", "1000", "old summary"}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := csv.NewWriter(f)
+	if err := w.Write(oldHeader); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Write(oldRecord); err != nil {
+		t.Fatal(err)
+	}
+	w.Flush()
+	if err := w.Error(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	logger := NewAlertCSVLogger(dir, newYorkLocation(t))
+	alert := sampleAlert(time.Date(2026, 4, 6, 9, 41, 0, 0, time.FixedZone("ET", -4*3600)), "AAPL-1", "AAPL", 62.3)
+	if err := logger.Append(alert); err != nil {
+		t.Fatalf("Append(alert) error = %v", err)
+	}
+
+	rows := readCSVRows(t, path)
+	if !reflect.DeepEqual(rows[0], alertCSVHeader) {
+		t.Fatalf("header = %v, want %v", rows[0], alertCSVHeader)
+	}
+	if len(rows[1]) != len(alertCSVHeader) || rows[1][18] != "" {
+		t.Fatalf("old row was not padded with empty gap field: %v", rows[1])
+	}
+	if rows[2][18] != "4.25" {
+		t.Fatalf("new row gap = %q, want 4.25", rows[2][18])
 	}
 }
 
@@ -185,6 +235,7 @@ func sampleAlert(ts time.Time, id, symbol string, score float64) flush.Alert {
 		SessionDate:    ts.Format("2006-01-02"),
 		Price:          97.4,
 		FlushScore:     score,
+		GapPercent:     4.25,
 		Tier:           flush.TierForScore(score),
 		VolumeSince4AM: 512300,
 		Summary:        flush.Summary(metrics),

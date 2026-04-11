@@ -15,6 +15,9 @@ const replayCalendar = document.getElementById("replayCalendar");
 const reloadBtn = document.getElementById("reloadBtn");
 const generateDashboardBtn = document.getElementById("generateDashboardBtn");
 const applyBtn = document.getElementById("applyBtn");
+const gapperPercent = document.getElementById("gapperPercent");
+const gapperMode = document.getElementById("gapperMode");
+const gapperSummary = document.getElementById("gapperSummary");
 const watchlistSection = document.getElementById("watchlistSection");
 const watchlistToggle = document.getElementById("watchlistToggle");
 const watchlistSummary = document.getElementById("watchlistSummary");
@@ -46,6 +49,9 @@ let dashboardPending = false;
 let replayMonth = calendarMonthKey(new Date());
 let selectedReplayDate = "";
 let statusState = { mode: "live", replaying: false, replay_date: "" };
+let watchlistItems = [];
+let gapperState = { enabled: false, pending: false, results: [], count: 0, gap_percent: 4 };
+let gapperSortState = { key: "gap", direction: "desc" };
 let watchlistExpanded = localStorage.getItem("flush-detector.watchlist-expanded") === "true";
 let pinSet = new Set(JSON.parse(localStorage.getItem("flush-detector.pins") || "[]"));
 let expandedMinutes = new Set();
@@ -93,6 +99,10 @@ function connectWS() {
     }
     if (msg.type === "watchlist") {
       renderWatchlist(msg.payload);
+      return;
+    }
+    if (msg.type === "gappers") {
+      applyGappers(msg.payload);
     }
   };
 }
@@ -231,6 +241,10 @@ function hydrateControls() {
   minBars.value = configState.flush.min_bars_before_alerts;
   requireVWAP.checked = !!configState.flush.require_below_vwap;
   requireDrop.checked = !!configState.flush.require_drop_from_recent_high;
+  if (configState.gapper) {
+    gapperPercent.value = configState.gapper.gap_percent ?? 4;
+    gapperMode.checked = !!configState.gapper.enabled;
+  }
 }
 
 function updateReplaySummary() {
@@ -310,14 +324,36 @@ function renderReplayCalendar() {
 }
 
 function renderWatchlist(payload) {
-  const list = Array.isArray(payload) ? payload : payload?.watchlist || [];
+  watchlistItems = Array.isArray(payload) ? payload : payload?.watchlist || [];
+  renderWatchlistTags();
+}
+
+function applyGappers(payload) {
+  gapperState = payload || { enabled: false, pending: false, results: [], count: 0, gap_percent: 4 };
+  if (configState?.gapper) {
+    configState.gapper.enabled = !!gapperState.enabled;
+    configState.gapper.gap_percent = Number(gapperState.gap_percent ?? configState.gapper.gap_percent);
+  }
+  renderWatchlistTags();
+}
+
+function renderWatchlistTags() {
+  const list = watchlistItems;
   const sourceSet = new Set();
   watchlistTags.innerHTML = "";
+  list.forEach((item) => (item.sources || []).forEach((source) => sourceSet.add(source)));
+  watchlistTags.classList.toggle("gapper-table-wrap", !!gapperState.enabled);
+
+  if (gapperState.enabled) {
+    renderGapperTags();
+    updateGapperSummary(list.length);
+    return;
+  }
+
   list.forEach((item) => {
     const tag = document.createElement("span");
     tag.className = "tag";
     const sources = item.sources?.length ? ` · ${item.sources.join(", ")}` : "";
-    (item.sources || []).forEach((source) => sourceSet.add(source));
     tag.textContent = `${item.symbol}${sources}`;
     watchlistTags.appendChild(tag);
   });
@@ -325,6 +361,176 @@ function renderWatchlist(payload) {
   watchlistSummary.textContent = sourceCount > 0
     ? `${list.length} symbols from ${sourceCount} watchlist${sourceCount === 1 ? "" : "s"}`
     : `${list.length} symbols loaded`;
+  if (gapperSummary) {
+    gapperSummary.textContent = "Gapper-mode is off. Alerts, logs, and dashboards use the full watchlist.";
+  }
+}
+
+function renderGapperTags() {
+  const results = sortedGappers();
+  if (gapperState.pending) {
+    const tag = document.createElement("span");
+    tag.className = "tag";
+    tag.textContent = "Scanning gappers...";
+    watchlistTags.appendChild(tag);
+    return;
+  }
+  if (gapperState.failed) {
+    const tag = document.createElement("span");
+    tag.className = "tag";
+    tag.textContent = "Gapper scan failed";
+    watchlistTags.appendChild(tag);
+    return;
+  }
+  if (!results.length) {
+    const tag = document.createElement("span");
+    tag.className = "tag";
+    tag.textContent = `No gappers at ${formatGapThreshold(gapperState.gap_percent)}`;
+    watchlistTags.appendChild(tag);
+    return;
+  }
+
+  const table = document.createElement("div");
+  table.className = "gapper-table";
+  table.setAttribute("role", "table");
+  table.setAttribute("aria-label", "Gapper watchlist");
+  table.innerHTML = `
+    <div class="gapper-row gapper-head" role="row">
+      ${gapperHeaderCell("Ticker", "symbol")}
+      ${gapperHeaderCell("Gap", "gap")}
+      ${gapperHeaderCell("Price", "price")}
+      ${gapperHeaderCell("4am Vol", "volume")}
+      ${gapperHeaderCell("Time", "time")}
+      <div role="columnheader">Chart</div>
+    </div>
+  `;
+  table.querySelectorAll(".gapper-sort-btn").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      setGapperSort(button.dataset.sortKey);
+    });
+  });
+
+  results.forEach((item) => {
+    const row = document.createElement("button");
+    row.className = `gapper-row gapper-data-row${Number(item.gap_percent || 0) < 0 ? " down" : ""}`;
+    row.type = "button";
+    row.setAttribute("role", "row");
+    row.title = `${item.name || item.symbol} gap ${formatGap(item.gap_percent)}. Open chart.`;
+    row.innerHTML = `
+      <div class="gapper-symbol-cell" role="cell">
+        <strong>${escapeHTML(item.symbol)}</strong>
+        <span>${escapeHTML(item.name || "")}</span>
+      </div>
+      <div class="gapper-gap-cell" role="cell">${escapeHTML(formatGap(item.gap_percent))}</div>
+      <div class="gapper-price-cell" role="cell">${escapeHTML(formatPrice(item.open))}</div>
+      <div class="gapper-volume-cell" role="cell">${escapeHTML(formatVolume(item.volume_since_4am))}</div>
+      <div role="cell">${escapeHTML(gapperTimeLabel(item))}</div>
+      <div class="gapper-chart-cell" role="cell">Open</div>
+    `;
+    row.addEventListener("click", () => {
+      window.open(gapperChartURL(item), "_blank", "noopener,noreferrer");
+    });
+    table.appendChild(row);
+  });
+  watchlistTags.appendChild(table);
+}
+
+function sortedGappers() {
+  const results = Array.isArray(gapperState.results) ? gapperState.results.slice() : [];
+  const dir = gapperSortState.direction === "asc" ? 1 : -1;
+  results.sort((a, b) => {
+    let diff = 0;
+    if (gapperSortState.key === "symbol") {
+      diff = String(a.symbol || "").localeCompare(String(b.symbol || ""));
+    } else if (gapperSortState.key === "price") {
+      diff = Number(a.open || 0) - Number(b.open || 0);
+    } else if (gapperSortState.key === "volume") {
+      diff = Number(a.volume_since_4am || 0) - Number(b.volume_since_4am || 0);
+    } else if (gapperSortState.key === "time") {
+      diff = new Date(a.open_at || 0).getTime() - new Date(b.open_at || 0).getTime();
+    } else {
+      diff = Number(a.gap_percent || 0) - Number(b.gap_percent || 0);
+    }
+    if (diff !== 0) return diff * dir;
+    return String(a.symbol || "").localeCompare(String(b.symbol || ""));
+  });
+  return results;
+}
+
+function gapperHeaderCell(label, key) {
+  const active = gapperSortState.key === key;
+  const direction = active ? gapperSortState.direction : "";
+  const marker = active ? (direction === "asc" ? " asc" : " desc") : "";
+  const ariaSort = active ? (direction === "asc" ? "ascending" : "descending") : "none";
+  return `<div role="columnheader" aria-sort="${ariaSort}"><button class="gapper-sort-btn" type="button" data-sort-key="${escapeHTML(key)}">${escapeHTML(label + marker)}</button></div>`;
+}
+
+function setGapperSort(key) {
+  if (gapperSortState.key === key) {
+    gapperSortState = {
+      key,
+      direction: gapperSortState.direction === "desc" ? "asc" : "desc",
+    };
+  } else {
+    gapperSortState = {
+      key,
+      direction: key === "symbol" ? "asc" : "desc",
+    };
+  }
+  renderWatchlistTags();
+}
+
+function updateGapperSummary(totalSymbols) {
+  const threshold = formatGapThreshold(gapperState.gap_percent);
+  const target = gapperState.target_date ? ` for ${gapperState.target_date}` : "";
+  const updated = gapperState.updated_at ? ` · ${timeParts(gapperState.updated_at).display}` : "";
+  if (gapperState.pending) {
+    watchlistSummary.textContent = `Scanning ${totalSymbols} symbols for ${threshold} gappers${target}`;
+    gapperSummary.textContent = `Scanning ${totalSymbols} symbols from prior regular close${target}.`;
+    return;
+  }
+  if (gapperState.failed) {
+    watchlistSummary.textContent = `Gapper scan failed${target}`;
+    gapperSummary.textContent = gapperState.note || "Gapper scan failed.";
+    return;
+  }
+  watchlistSummary.textContent = `${gapperState.count || 0} gappers at ${threshold}${target}`;
+  const source = sortedGappers().some((item) => item.provisional) ? "Live premarket gaps are updating from the latest minute." : "Gaps use the 09:30 ET open when available.";
+  gapperSummary.textContent = `${source}${updated}`;
+}
+
+function formatGap(value) {
+  const n = Number(value || 0);
+  const sign = n > 0 ? "+" : "";
+  return `${sign}${n.toFixed(2)}%`;
+}
+
+function formatPrice(value) {
+  const n = Number(value || 0);
+  if (!Number.isFinite(n) || n <= 0) return "--";
+  return `$${n.toFixed(2)}`;
+}
+
+function formatGapThreshold(value) {
+  const n = Number(value ?? 0);
+  const sign = n > 0 ? "+" : "";
+  return `${sign}${n.toFixed(1)}%`;
+}
+
+function gapperTimeLabel(item) {
+  if (!item.open_at) return "--";
+  const parts = timeParts(item.open_at);
+  return parts.minuteLabel || "--";
+}
+
+function gapperChartURL(item) {
+  const base = configState?.ui?.chart_opener_base_url || "http://localhost:8081";
+  const date = item.target_date || todayDateKey();
+  const parts = timeParts(item.open_at);
+  const signalTime = parts.chartTime === "0000" ? "0930" : parts.chartTime;
+  const signal = Number(item.gap_percent || 0) < 0 ? "sell" : "buy";
+  return `${base}/api/open-chart/${encodeURIComponent(item.symbol)}/${encodeURIComponent(date)}/${signalTime}?signal=${signal}`;
 }
 
 function updateWatchlistUI() {
@@ -722,9 +928,12 @@ function renderCard(alert) {
         <p class="detail-meta">${escapeHTML(parts.display)} · $${Number(alert.price || 0).toFixed(2)}</p>
         <div class="source-line">${escapeHTML((alert.sources || []).join(", ") || "single source")}</div>
       </div>
-      <div class="detail-score">
-        <span class="detail-score-label">Flush Score</span>
-        <strong class="detail-score-value ${scoreClass}">${score.toFixed(1)}</strong>
+      <div class="detail-score-wrap">
+        ${gapBadge(alert)}
+        <div class="detail-score">
+          <span class="detail-score-label">Flush Score</span>
+          <strong class="detail-score-value ${scoreClass}">${score.toFixed(1)}</strong>
+        </div>
       </div>
     </div>
     <div class="detail-metrics">
@@ -825,6 +1034,16 @@ function metric(label, value) {
   return `<div class="detail-metric"><span class="detail-metric-label">${escapeHTML(label)}</span><span class="detail-metric-value">${escapeHTML(value)}</span></div>`;
 }
 
+function gapBadge(alert) {
+  if (!alert.gap_percent) return "";
+  return `
+    <div class="detail-gap">
+      <span class="detail-gap-label">Gap</span>
+      <strong class="detail-gap-value">${escapeHTML(formatGap(alert.gap_percent))}</strong>
+    </div>
+  `;
+}
+
 function scoreClassName(score) {
   if (score < 40) return "score-0";
   if (score < 60) return "score-1";
@@ -888,14 +1107,16 @@ function scheduleDefaultViewportPosition() {
 }
 
 async function bootstrap() {
-  const [configRes, watchlistRes, historyRes] = await Promise.all([
+  const [configRes, watchlistRes, gappersRes, historyRes] = await Promise.all([
     fetch("/api/config"),
     fetch("/api/watchlist"),
+    fetch("/api/gappers"),
     fetch("/api/history"),
   ]);
   configState = await configRes.json();
   hydrateControls();
   renderWatchlist(await watchlistRes.json());
+  applyGappers(await gappersRes.json());
   const historyPayload = await historyRes.json();
   alerts = historyPayload.alerts || [];
   setReplayMonth(replayMonth);
@@ -1028,6 +1249,11 @@ applyBtn.addEventListener("click", async () => {
       ...configState.alert,
       enable_sound: soundEnabled,
     },
+    gapper: {
+      ...(configState.gapper || { enabled: true, gap_percent: 4, lookback_days: 7 }),
+      enabled: gapperMode.checked,
+      gap_percent: Number(gapperPercent.value),
+    },
   };
   const res = await fetch("/api/config/apply", {
     method: "POST",
@@ -1036,6 +1262,7 @@ applyBtn.addEventListener("click", async () => {
   });
   configState = await res.json();
   hydrateControls();
+  renderWatchlistTags();
   render();
 });
 

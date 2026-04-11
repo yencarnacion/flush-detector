@@ -2,8 +2,12 @@ package massive
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -18,13 +22,17 @@ import (
 )
 
 type Client struct {
-	rest   *massiverest.Client
-	ws     *massivews.Client
-	log    *slog.Logger
-	mu     sync.Mutex
-	subs   map[string]struct{}
-	status func(string)
+	rest     *massiverest.Client
+	ws       *massivews.Client
+	log      *slog.Logger
+	mu       sync.Mutex
+	subs     map[string]struct{}
+	status   func(string)
+	cacheDir string
+	cacheMu  sync.Mutex
 }
+
+const defaultCacheDir = "cache"
 
 func New(apiKey string, log *slog.Logger, status func(string)) (*Client, error) {
 	wsClient, err := massivews.New(massivews.Config{
@@ -46,11 +54,12 @@ func New(apiKey string, log *slog.Logger, status func(string)) (*Client, error) 
 		return nil, err
 	}
 	return &Client{
-		rest:   massiverest.NewWithOptions(apiKey, massiverest.WithPagination(false), massiverest.WithTrace(false)),
-		ws:     wsClient,
-		log:    log,
-		subs:   make(map[string]struct{}),
-		status: status,
+		rest:     massiverest.NewWithOptions(apiKey, massiverest.WithPagination(false), massiverest.WithTrace(false)),
+		ws:       wsClient,
+		log:      log,
+		subs:     make(map[string]struct{}),
+		status:   status,
+		cacheDir: defaultCacheDir,
 	}, nil
 }
 
@@ -157,6 +166,13 @@ func (c *Client) SyncSubscriptions(symbols []string) error {
 }
 
 func (c *Client) BackfillBars(ctx context.Context, symbol string, from, to time.Time, limit int) ([]bars.Bar, error) {
+	symbol = strings.ToUpper(symbol)
+	cachePath := c.cachePath("minute-bars", symbol, from.UTC().Format(time.RFC3339Nano), to.UTC().Format(time.RFC3339Nano), fmt.Sprintf("%d", limit), "adjusted=true", "sort=asc")
+	var cached []bars.Bar
+	if c.readCache(cachePath, &cached) {
+		return cached, nil
+	}
+
 	params := &gen.GetStocksAggregatesParams{
 		Adjusted: massiverest.Ptr(true),
 		Sort:     massiverest.String("asc"),
@@ -164,7 +180,7 @@ func (c *Client) BackfillBars(ctx context.Context, symbol string, from, to time.
 	}
 	resp, err := c.rest.GetStocksAggregatesWithResponse(
 		ctx,
-		strings.ToUpper(symbol),
+		symbol,
 		1,
 		gen.GetStocksAggregatesParamsTimespan("minute"),
 		from.Format("2006-01-02"),
@@ -195,18 +211,27 @@ func (c *Client) BackfillBars(ctx context.Context, symbol string, from, to time.
 			End:    start.Add(time.Minute),
 		})
 	}
+	c.writeCache(cachePath, out)
 	return out, nil
 }
 
 func (c *Client) AvailableDates(ctx context.Context, symbol string, from, to time.Time) ([]string, error) {
+	symbol = strings.ToUpper(symbol)
+	limit := maxTradingDaysEstimate(from, to)
+	cachePath := c.cachePath("available-dates", symbol, from.UTC().Format(time.RFC3339Nano), to.UTC().Format(time.RFC3339Nano), fmt.Sprintf("%d", limit), "adjusted=true", "sort=asc")
+	var cached []string
+	if c.readCache(cachePath, &cached) {
+		return cached, nil
+	}
+
 	params := &gen.GetStocksAggregatesParams{
 		Adjusted: massiverest.Ptr(true),
 		Sort:     massiverest.String("asc"),
-		Limit:    massiverest.Int(maxTradingDaysEstimate(from, to)),
+		Limit:    massiverest.Int(limit),
 	}
 	resp, err := c.rest.GetStocksAggregatesWithResponse(
 		ctx,
-		strings.ToUpper(symbol),
+		symbol,
 		1,
 		gen.GetStocksAggregatesParamsTimespan("day"),
 		from.Format("2006-01-02"),
@@ -237,6 +262,7 @@ func (c *Client) AvailableDates(ctx context.Context, symbol string, from, to tim
 		out = append(out, day)
 	}
 	slices.Sort(out)
+	c.writeCache(cachePath, out)
 	return out, nil
 }
 
@@ -252,6 +278,56 @@ func (c *Client) TickerDetails(ctx context.Context, symbol string) (name string,
 		return "", nil
 	}
 	return resp.JSON200.Results.Name, nil
+}
+
+func (c *Client) cachePath(prefix string, parts ...string) string {
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return filepath.Join(c.cacheDir, fmt.Sprintf("%s_%x.json", prefix, sum[:16]))
+}
+
+func (c *Client) readCache(path string, dst any) bool {
+	if strings.TrimSpace(c.cacheDir) == "" {
+		return false
+	}
+	c.cacheMu.Lock()
+	defer c.cacheMu.Unlock()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	if err := json.Unmarshal(data, dst); err != nil {
+		c.log.Debug("ignore invalid massive cache", "path", path, "error", err)
+		return false
+	}
+	return true
+}
+
+func (c *Client) writeCache(path string, payload any) {
+	if strings.TrimSpace(c.cacheDir) == "" {
+		return
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		c.log.Debug("marshal massive cache", "path", path, "error", err)
+		return
+	}
+
+	c.cacheMu.Lock()
+	defer c.cacheMu.Unlock()
+	if err := os.MkdirAll(c.cacheDir, 0o755); err != nil {
+		c.log.Debug("create massive cache dir", "dir", c.cacheDir, "error", err)
+		return
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		c.log.Debug("write massive cache", "path", tmp, "error", err)
+		return
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		c.log.Debug("rename massive cache", "path", path, "error", err)
+		_ = os.Remove(tmp)
+	}
 }
 
 type wsLogger struct {

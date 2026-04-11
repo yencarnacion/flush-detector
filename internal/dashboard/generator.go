@@ -34,6 +34,7 @@ type Alert struct {
 	Sources                 string    `json:"sources"`
 	Price                   float64   `json:"price"`
 	FlushScore              float64   `json:"flush_score"`
+	GapPercent              float64   `json:"gap_percent,omitempty"`
 	Tier                    string    `json:"tier"`
 	DropFromPrior30mHighPct float64   `json:"drop_from_prior_30m_high_pct"`
 	DistanceBelowVWAPPct    float64   `json:"distance_below_vwap_pct"`
@@ -292,6 +293,7 @@ func parseAlerts(path, signalType, chartBaseURL, sessionStartTime string) ([]Ale
 			Sources:                 strings.TrimSpace(field(record, index, "sources")),
 			Price:                   parseFloat(field(record, index, "price")),
 			FlushScore:              roundTo(parseFloat(field(record, index, "flush_score")), 1),
+			GapPercent:              roundTo(parseFloat(field(record, index, "gap_percent")), 2),
 			Tier:                    normalizedTier(field(record, index, "tier"), parseFloat(field(record, index, "flush_score"))),
 			DropFromPrior30mHighPct: roundTo(parseFloat(field(record, index, "drop_from_prior_30m_high_pct")), 1),
 			DistanceBelowVWAPPct:    roundTo(parseFloat(field(record, index, "distance_below_vwap_pct")), 1),
@@ -374,6 +376,7 @@ func writeSignalCSV(path string, alerts []Alert) error {
 		"alert_time_et",
 		"price",
 		"flush_score",
+		"gap_percent",
 		"tier",
 		"alert_id",
 		"name",
@@ -402,6 +405,7 @@ func writeSignalCSV(path string, alerts []Alert) error {
 			alert.AlertTimeText,
 			formatFloat(alert.Price, 2),
 			formatFloat(alert.FlushScore, 1),
+			formatOptionalFloat(alert.GapPercent, 2),
 			alert.Tier,
 			alert.AlertID,
 			alert.Name,
@@ -626,6 +630,13 @@ func parseFloat(value string) float64 {
 func formatFloat(value float64, decimals int) string {
 	format := "%." + strconv.Itoa(decimals) + "f"
 	return fmt.Sprintf(format, roundTo(value, decimals))
+}
+
+func formatOptionalFloat(value float64, decimals int) string {
+	if value == 0 {
+		return ""
+	}
+	return formatFloat(value, decimals)
 }
 
 func formatWholeNumber(value float64) string {
@@ -998,6 +1009,10 @@ const dashboardTemplate = `<!doctype html>
       font-weight: 700;
       background: rgba(255,255,255,0.08);
     }
+    .gap-pill {
+      color: var(--accent-2);
+      margin-right: 6px;
+    }
     .score-0 { color: #a9bbca; }
     .score-1 { color: #77c5ff; }
     .score-2 { color: #66d6c2; }
@@ -1247,6 +1262,16 @@ const dashboardTemplate = `<!doctype html>
       if (score < 75) return 'score-2';
       if (score < 90) return 'score-3';
       return 'score-4';
+    }
+
+    function formatGap(value) {
+      const numeric = Number(value || 0);
+      return (numeric > 0 ? '+' : '') + numeric.toFixed(2) + '%';
+    }
+
+    function gapPill(alert) {
+      if (!alert.gap_percent) return '';
+      return '<span class="score-pill gap-pill">' + escapeHTML(formatGap(alert.gap_percent)) + '</span>';
     }
 
     function metricValue(value) {
@@ -1546,6 +1571,7 @@ const dashboardTemplate = `<!doctype html>
             '<span class="subtext">' + escapeHTML(alert.signal_time_display) + '</span>',
             '</td>',
             '<td>',
+            gapPill(alert),
             '<span class="score-pill ' + scoreClass(alert.flush_score) + '">' + alert.flush_score.toFixed(1) + '</span>',
             '<span class="subtext"><span class="tier-pill">' + escapeHTML(alert.tier) + '</span></span>',
             '</td>',
@@ -1596,6 +1622,12 @@ const dashboardTemplate = `<!doctype html>
 
       const ratings = metricRatings(selected);
       const metricCards = [
+        selected.gap_percent ? [
+          '<div class="metric">',
+          '<label>Opening Gap</label>',
+          '<strong>' + formatGap(selected.gap_percent) + '</strong>',
+          '</div>',
+        ].join('') : '',
         renderRatedMetric('Drop From Prior 30m High', selected.drop_from_prior_30m_high_pct.toFixed(1) + '%', ratings.dropFromPrior30mHigh),
         renderRatedMetric('Distance Below VWAP', selected.distance_below_vwap_pct.toFixed(1) + '%', ratings.distanceBelowVWAP),
         renderRatedMetric('5m Downside ROC', selected.roc_5m_pct.toFixed(1) + '%', ratings.roc5m),

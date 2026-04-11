@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -40,5 +42,26 @@ func TestReplayDayRangeForTodayCapsAtNow(t *testing.T) {
 	}
 	if !to.Equal(now) {
 		t.Fatalf("to = %s, want %s", to.Format(time.RFC3339), now.Format(time.RFC3339))
+	}
+}
+
+func TestResetCacheDirRecreatesEmptyDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "cache")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(dir, "stale.json")
+	if err := os.WriteFile(stale, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := resetCacheDir(dir); err != nil {
+		t.Fatalf("resetCacheDir error = %v", err)
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatalf("cache dir stat error = %v", err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("expected stale cache file removed, stat err = %v", err)
 	}
 }

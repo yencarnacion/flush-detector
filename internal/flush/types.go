@@ -22,6 +22,7 @@ type Alert struct {
 	SessionDate    string    `json:"session_date"`
 	Price          float64   `json:"price"`
 	FlushScore     float64   `json:"flush_score"`
+	GapPercent     float64   `json:"gap_percent,omitempty"`
 	Tier           string    `json:"tier"`
 	VolumeSince4AM float64   `json:"volume_since_4am"`
 	Summary        string    `json:"summary"`

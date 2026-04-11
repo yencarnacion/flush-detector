@@ -21,6 +21,24 @@
           </div>
         </header>
 
+        <section class="gapper-panel" aria-labelledby="gapperHeading">
+          <div>
+            <p class="eyebrow replay-eyebrow">Gapper Mode</p>
+            <h2 id="gapperHeading">Gap Analysis</h2>
+            <p id="gapperSummary" class="mini-meta">Scanning watchlist gaps from prior regular close.</p>
+          </div>
+          <div class="gapper-controls">
+            <label class="field gapper-percent-field">
+              <span>Gap %</span>
+              <input id="gapperPercent" type="number" step="0.1" value="4">
+            </label>
+            <label class="toggle gapper-toggle">
+              <input id="gapperMode" type="checkbox" checked>
+              <span>Gapper-mode</span>
+            </label>
+          </div>
+        </section>
+
         <section class="controls-panel">
           <div class="controls-row">
             <label class="field grow">

@@ -43,4 +43,34 @@ flush:
 	if cfg.Alert.CooldownSeconds != 10 {
 		t.Fatalf("default cooldown not applied, got %d", cfg.Alert.CooldownSeconds)
 	}
+	if !cfg.Gapper.Enabled || cfg.Gapper.GapPercent != 4 || cfg.Gapper.LookbackDays != 7 {
+		t.Fatalf("default gapper config not applied: %+v", cfg.Gapper)
+	}
+}
+
+func TestLoadConfigAllowsZeroGapperThreshold(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	err := os.WriteFile(path, []byte(`
+gapper:
+  enabled: true
+  gap_percent: 0
+  lookback_days: 7
+`), 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Gapper.GapPercent != 0 {
+		t.Fatalf("GapPercent = %.1f, want 0", cfg.Gapper.GapPercent)
+	}
+	if cfg.Gapper.LookbackDays != 7 {
+		t.Fatalf("LookbackDays = %d, want 7", cfg.Gapper.LookbackDays)
+	}
 }

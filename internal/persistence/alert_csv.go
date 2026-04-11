@@ -1,6 +1,7 @@
 package persistence
 
 import (
+	"bytes"
 	"encoding/csv"
 	"fmt"
 	"math"
@@ -43,6 +44,9 @@ func (l *AlertCSVLogger) Append(alert flush.Alert) error {
 
 	alertTimeET := alert.AlertTime.In(l.tz)
 	path := filepath.Join(l.dir, fmt.Sprintf("alerts_%s.csv", alertTimeET.Format("20060102")))
+	if err := ensureAlertCSVHeader(path); err != nil {
+		return err
+	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
@@ -65,6 +69,47 @@ func (l *AlertCSVLogger) Append(alert flush.Alert) error {
 	}
 	w.Flush()
 	return w.Error()
+}
+
+func ensureAlertCSVHeader(path string) error {
+	f, err := os.Open(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	rows, err := csv.NewReader(f).ReadAll()
+	closeErr := f.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if len(rows) == 0 || hasCSVColumn(rows[0], "gap_percent") {
+		return nil
+	}
+	rows[0] = append(rows[0], "gap_percent")
+	for i := 1; i < len(rows); i++ {
+		rows[i] = append(rows[i], "")
+	}
+
+	var buf bytes.Buffer
+	writer := csv.NewWriter(&buf)
+	if err := writer.WriteAll(rows); err != nil {
+		return err
+	}
+	return os.WriteFile(path, buf.Bytes(), 0o644)
+}
+
+func hasCSVColumn(header []string, name string) bool {
+	for _, field := range header {
+		if strings.TrimSpace(field) == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (l *AlertCSVLogger) DeleteDay(day time.Time) error {
@@ -101,6 +146,7 @@ var alertCSVHeader = []string{
 	"volume_expansion",
 	"volume_since_4am",
 	"summary",
+	"gap_percent",
 }
 
 func alertCSVRecord(alert flush.Alert, tz *time.Location) []string {
@@ -124,6 +170,7 @@ func alertCSVRecord(alert flush.Alert, tz *time.Location) []string {
 		formatFloat1(alert.Metrics.VolumeExpansion),
 		formatFloat0(alert.VolumeSince4AM),
 		alert.Summary,
+		formatOptionalFloat2(alert.GapPercent),
 	}
 }
 
@@ -133,4 +180,11 @@ func formatFloat1(v float64) string {
 
 func formatFloat0(v float64) string {
 	return fmt.Sprintf("%.0f", math.Round(v))
+}
+
+func formatOptionalFloat2(v float64) string {
+	if v == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%.2f", v)
 }

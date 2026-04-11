@@ -133,6 +133,7 @@ h2 {
 }
 
 .controls-panel,
+.gapper-panel,
 .watchlist-strip,
 .pinned-section,
 .news-panel {
@@ -148,11 +149,32 @@ h2 {
 .controls-row,
 .controls-grid,
 .section-head,
+.gapper-panel,
 .watchlist-strip {
   display: flex;
   gap: 14px;
   align-items: center;
   justify-content: space-between;
+}
+
+.gapper-panel {
+  align-items: center;
+}
+
+.gapper-controls {
+  display: flex;
+  align-items: end;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.gapper-percent-field {
+  width: 140px;
+}
+
+.gapper-toggle {
+  min-height: 48px;
 }
 
 .controls-grid {
@@ -490,11 +512,143 @@ select {
   display: none;
 }
 
+.tag-strip.gapper-table-wrap {
+  display: block;
+}
+
 .tag {
   padding: 8px 12px;
   border-radius: 999px;
   background: rgba(29, 43, 40, 0.08);
   font-size: 0.92rem;
+}
+
+.tag.gapper-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  cursor: pointer;
+  color: var(--ink);
+  font: inherit;
+}
+
+.tag.gapper-tag:hover {
+  background: rgba(12, 123, 89, 0.12);
+  border-color: rgba(12, 123, 89, 0.32);
+}
+
+.tag.gapper-tag .gap-value {
+  font-family: var(--trader-mono);
+  font-weight: 700;
+  color: var(--good);
+}
+
+.tag.gapper-tag.down .gap-value {
+  color: var(--accent);
+}
+
+.tag.gapper-tag .gap-source {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.gapper-table {
+  width: 100%;
+  display: grid;
+  gap: 6px;
+}
+
+.gapper-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1.6fr) minmax(120px, 0.9fr) minmax(100px, 0.8fr) minmax(112px, 0.9fr) minmax(80px, 0.7fr) minmax(76px, 0.6fr);
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 9px 12px;
+  border-radius: 8px;
+}
+
+.gapper-head {
+  color: var(--muted);
+  background: rgba(29, 43, 40, 0.06);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.gapper-sort-btn {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+  text-transform: inherit;
+  cursor: pointer;
+}
+
+.gapper-sort-btn:hover {
+  color: var(--ink);
+}
+
+.gapper-data-row {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.66);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gapper-data-row:hover {
+  background: rgba(12, 123, 89, 0.1);
+  border-color: rgba(12, 123, 89, 0.32);
+}
+
+.gapper-symbol-cell {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.gapper-symbol-cell strong {
+  font-family: var(--trader-mono);
+  font-size: 1.08rem;
+}
+
+.gapper-symbol-cell span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gapper-gap-cell {
+  font-family: var(--trader-mono);
+  font-size: 1.18rem;
+  font-weight: 800;
+  color: var(--good);
+}
+
+.gapper-data-row.down .gapper-gap-cell {
+  color: var(--accent);
+}
+
+.gapper-price-cell,
+.gapper-volume-cell,
+.gapper-chart-cell {
+  font-family: var(--trader-mono);
+  font-weight: 700;
+}
+
+.gapper-chart-cell {
+  color: var(--good);
 }
 
 .alerts-board,
@@ -674,6 +828,36 @@ select {
 .detail-score {
   min-width: 148px;
   text-align: right;
+}
+
+.detail-score-wrap {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.detail-gap {
+  min-width: 96px;
+  text-align: right;
+  padding-top: 2px;
+}
+
+.detail-gap-label {
+  display: block;
+  color: rgba(237, 245, 251, 0.56);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.detail-gap-value {
+  display: block;
+  margin-top: 6px;
+  font-family: var(--trader-mono);
+  font-size: 1.4rem;
+  line-height: 1;
+  color: #66d6c2;
 }
 
 .detail-score-label {
@@ -862,6 +1046,7 @@ select {
 
 @media (max-width: 960px) {
   .hero,
+  .gapper-panel,
   .controls-row,
   .watchlist-strip,
   .section-head,
@@ -926,7 +1111,28 @@ select {
     text-align: left;
   }
 
+  .detail-score-wrap {
+    justify-content: flex-start;
+  }
+
+  .detail-gap {
+    text-align: left;
+  }
+
   .detail-metrics {
     grid-template-columns: 1fr;
+  }
+
+  .gapper-head {
+    display: none;
+  }
+
+  .gapper-row {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px 12px;
+  }
+
+  .gapper-symbol-cell {
+    grid-column: 1 / -1;
   }
 }

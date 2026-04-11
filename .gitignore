@@ -4,3 +4,5 @@ go.sum
 log
 state.json
 dashboard
+tmp
+cache

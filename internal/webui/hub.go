@@ -27,6 +27,7 @@ type Hub struct {
 	status      any
 	config      any
 	watchlist   any
+	gappers     any
 }
 
 type client struct {
@@ -86,6 +87,13 @@ func (h *Hub) SetWatchlist(payload any) {
 	h.Broadcast("watchlist", payload)
 }
 
+func (h *Hub) SetGappers(payload any) {
+	h.mu.Lock()
+	h.gappers = payload
+	h.mu.Unlock()
+	h.Broadcast("gappers", payload)
+}
+
 func (h *Hub) AddAlert(alert flush.Alert) {
 	h.mu.Lock()
 	h.history = append(h.history, alert)
@@ -134,6 +142,7 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 	status := h.status
 	config := h.config
 	watchlist := h.watchlist
+	gappers := h.gappers
 	history := append([]flush.Alert(nil), h.history...)
 	h.mu.Unlock()
 
@@ -145,6 +154,9 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	if watchlist != nil {
 		_ = c.writeJSON(Envelope{Type: "watchlist", Payload: watchlist})
+	}
+	if gappers != nil {
+		_ = c.writeJSON(Envelope{Type: "gappers", Payload: gappers})
 	}
 	_ = c.writeJSON(Envelope{Type: "history", Payload: history})
 

@@ -3,8 +3,11 @@ package massive
 import (
 	"bytes"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"flush-detector/internal/bars"
 )
 
 func TestWSLoggerFormatsTemplate(t *testing.T) {
@@ -44,5 +47,27 @@ func TestWSLoggerSuppressesTransientClose1012Noise(t *testing.T) {
 
 	if got := buf.String(); got != "" {
 		t.Fatalf("expected no info/error log output for transient close 1012, got: %q", got)
+	}
+}
+
+func TestClientCacheRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	client := &Client{
+		log:      slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)),
+		cacheDir: dir,
+	}
+	path := client.cachePath("minute-bars", "AAPL", "2026-04-10")
+	want := []bars.Bar{{Symbol: "AAPL", Open: 10, Close: 11}}
+	client.writeCache(path, want)
+
+	var got []bars.Bar
+	if !client.readCache(path, &got) {
+		t.Fatal("expected cache hit")
+	}
+	if len(got) != 1 || got[0].Symbol != "AAPL" || got[0].Close != 11 {
+		t.Fatalf("cached bars = %+v, want %+v", got, want)
+	}
+	if !strings.HasPrefix(path, filepath.Clean(dir)) {
+		t.Fatalf("cache path = %q, want under %q", path, dir)
 	}
 }

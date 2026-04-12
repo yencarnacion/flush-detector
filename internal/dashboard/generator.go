@@ -905,10 +905,13 @@ const dashboardTemplate = `<!doctype html>
       transform: rotate(180deg);
     }
     .table-wrap {
-      overflow: hidden;
+      overflow-x: auto;
+      overflow-y: hidden;
+      -webkit-overflow-scrolling: touch;
     }
     table {
       width: 100%;
+      min-width: 760px;
       border-collapse: collapse;
     }
     thead th {
@@ -932,6 +935,17 @@ const dashboardTemplate = `<!doctype html>
     }
     tbody tr.active {
       background: linear-gradient(90deg, rgba(242,193,78,0.16), rgba(255,107,87,0.08));
+    }
+    tbody tr.mobile-detail-row {
+      display: none;
+      cursor: default;
+    }
+    tbody tr.mobile-detail-row:hover {
+      background: transparent;
+    }
+    tbody tr.mobile-detail-row td {
+      padding: 0 16px 16px;
+      background: rgba(255,255,255,0.02);
     }
     tbody tr.minute-group {
       cursor: default;
@@ -1107,6 +1121,12 @@ const dashboardTemplate = `<!doctype html>
       gap: 8px;
       margin-top: 14px;
     }
+    .detail-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 0 0 14px;
+    }
     .tag {
       background: rgba(255,255,255,0.07);
       color: var(--muted);
@@ -1133,6 +1153,17 @@ const dashboardTemplate = `<!doctype html>
     }
     @media (max-width: 1100px) {
       .layout { grid-template-columns: 1fr; }
+      .detail-panel {
+        display: none;
+        transform: none !important;
+      }
+      tbody tr.mobile-detail-row {
+        display: table-row;
+      }
+      tbody tr.mobile-detail-row .detail-card {
+        width: calc(100vw - 84px);
+        max-width: 100%;
+      }
     }
     @media (max-width: 700px) {
       .shell { width: min(100vw - 20px, 100%); margin-top: 10px; }
@@ -1232,6 +1263,7 @@ const dashboardTemplate = `<!doctype html>
     const alerts = JSON.parse(document.getElementById('payload').textContent);
     let filtered = [];
     let selected = null;
+    let mobileInlineDetailId = null;
 
     const dom = {
       search: document.getElementById('search'),
@@ -1455,11 +1487,19 @@ const dashboardTemplate = `<!doctype html>
       window.open(selected.open_chart_url, '_blank', 'noopener,noreferrer');
     }
 
+    function isNarrowLayout() {
+      return window.matchMedia && window.matchMedia('(max-width: 1100px)').matches;
+    }
+
     function syncDetailPanelPosition() {
       const layout = dom.layoutSection;
       const tablePanel = dom.tablePanel;
       const detailPanel = dom.detailPanel;
       if (!layout || !tablePanel || !detailPanel) return;
+      if (isNarrowLayout()) {
+        detailPanel.style.transform = 'none';
+        return;
+      }
 
       const layoutRect = layout.getBoundingClientRect();
       const passedTop = Math.max(0, -layoutRect.top);
@@ -1468,6 +1508,21 @@ const dashboardTemplate = `<!doctype html>
       const maxOffset = Math.max(0, tablePanel.scrollHeight - detailPanel.offsetHeight - 24);
       const offset = Math.min(desiredOffset, maxOffset);
       detailPanel.style.transform = offset > 0 ? 'translateY(' + offset + 'px)' : 'translateY(0)';
+    }
+
+    function revealDetailOnNarrowLayout() {
+      if (!isNarrowLayout()) return;
+      const selectedDetail = Array.from(dom.tableBody.querySelectorAll('tr.mobile-detail-row'))
+        .find(row => row.getAttribute('data-alert-id') === mobileInlineDetailId);
+      const selectedRow = Array.from(dom.tableBody.querySelectorAll('tr[data-alert-id]:not(.mobile-detail-row)'))
+        .find(row => row.getAttribute('data-alert-id') === mobileInlineDetailId);
+      const target = selectedDetail || selectedRow;
+      if (!target) return;
+      try {
+        target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      } catch (err) {
+        target.scrollIntoView(false);
+      }
     }
 
     function applyFilters() {
@@ -1492,6 +1547,9 @@ const dashboardTemplate = `<!doctype html>
 
       if (!selected || !filtered.some(alert => alert.alert_id === selected.alert_id)) {
         selected = filtered[0] || null;
+        mobileInlineDetailId = null;
+      } else if (mobileInlineDetailId && !filtered.some(alert => alert.alert_id === mobileInlineDetailId)) {
+        mobileInlineDetailId = null;
       }
 
       updateStats(filtered);
@@ -1559,7 +1617,7 @@ const dashboardTemplate = `<!doctype html>
           const active = selected && alert.alert_id === selected.alert_id ? 'active' : '';
           const timeOnly = alert.alert_time_et.slice(11);
           const rowNumber = rowNumberById.get(alert.alert_id) || '';
-          return [
+          const tableRow = [
             '<tr class="' + active + '" data-alert-id="' + escapeHTML(alert.alert_id) + '">',
             '<td class="row-number">' + rowNumber + '</td>',
             '<td>',
@@ -1582,6 +1640,16 @@ const dashboardTemplate = `<!doctype html>
             '<td>' + escapeHTML(alert.summary) + '</td>',
             '</tr>'
           ].join('');
+          if (!selected || mobileInlineDetailId !== alert.alert_id || selected.alert_id !== alert.alert_id) {
+            return tableRow;
+          }
+          return tableRow + [
+            '<tr class="mobile-detail-row" data-alert-id="' + escapeHTML(alert.alert_id) + '">',
+            '<td colspan="6">',
+            detailCardHTML(alert),
+            '</td>',
+            '</tr>',
+          ].join('');
         }).join('');
 
         return header + rows;
@@ -1601,16 +1669,74 @@ const dashboardTemplate = `<!doctype html>
         });
       });
 
-      dom.tableBody.querySelectorAll('tr[data-alert-id]').forEach(row => {
+      dom.tableBody.querySelectorAll('tr[data-alert-id]:not(.mobile-detail-row)').forEach(row => {
         row.addEventListener('click', () => {
           const alertId = row.getAttribute('data-alert-id');
           selected = filtered.find(alert => alert.alert_id === alertId) || selected;
+          mobileInlineDetailId = alertId;
           renderTable();
           renderDetail();
+          revealDetailOnNarrowLayout();
         });
       });
 
       syncSelectionButtons();
+    }
+
+    function detailCardHTML(alert) {
+      const ratings = metricRatings(alert);
+      const metricCards = [
+        alert.gap_percent ? [
+          '<div class="metric">',
+          '<label>Opening Gap</label>',
+          '<strong>' + formatGap(alert.gap_percent) + '</strong>',
+          '</div>',
+        ].join('') : '',
+        renderRatedMetric('Drop From Prior 30m High', alert.drop_from_prior_30m_high_pct.toFixed(1) + '%', ratings.dropFromPrior30mHigh),
+        renderRatedMetric('Distance Below VWAP', alert.distance_below_vwap_pct.toFixed(1) + '%', ratings.distanceBelowVWAP),
+        renderRatedMetric('5m Downside ROC', alert.roc_5m_pct.toFixed(1) + '%', ratings.roc5m),
+        renderRatedMetric('10m Downside ROC', alert.roc_10m_pct.toFixed(1) + '%', ratings.roc10m),
+        renderRatedMetric('20m Downside Slope', alert.down_slope_20m_pct_per_bar.toFixed(3) + '% / bar', ratings.downSlope20m),
+        renderRatedMetric('Range Expansion', 'x' + alert.range_expansion.toFixed(1), ratings.rangeExpansion),
+        renderRatedMetric('Volume Expansion', 'x' + alert.volume_expansion.toFixed(1), ratings.volumeExpansion),
+        [
+          '<div class="metric">',
+          '<label>Volume Since 04:00</label>',
+          '<strong>' + formatWholeNumber(alert.volume_since_4am) + '</strong>',
+          '</div>',
+        ].join(''),
+        [
+          '<div class="metric">',
+          '<label>Minutes From 09:30</label>',
+          '<strong>' + alert.minutes_from_open + '</strong>',
+          '</div>',
+        ].join(''),
+      ].join('');
+
+      return [
+        '<div class="detail-card">',
+        '<div class="detail-header">',
+        '<div>',
+        '<h3>' + escapeHTML(alert.symbol) + ' <span class="tier-pill">' + escapeHTML(alert.tier) + '</span></h3>',
+        '<p>' + escapeHTML(alert.name) + ' · ' + escapeHTML(alert.alert_time_et) + ' ET · $' + Number(alert.price).toFixed(2) + '</p>',
+        '</div>',
+        '<div class="score-pill ' + scoreClass(alert.flush_score) + '">' + alert.flush_score.toFixed(1) + '</div>',
+        '</div>',
+        '<div class="detail-actions">',
+        '<a class="button" href="' + escapeHTML(alert.open_chart_url) + '" target="_blank" rel="noopener noreferrer">Open Chart</a>',
+        '</div>',
+        '<div class="metric-grid">',
+        metricCards,
+        '</div>',
+        '<div class="tag-row">',
+        '<span class="tag">' + escapeHTML(alert.signal.toUpperCase()) + ' signal</span>',
+        '<span class="tag">' + escapeHTML(alert.sources || 'single source') + '</span>',
+        '<span class="tag">' + escapeHTML(alert.relative_strength_label) + '</span>',
+        '<span class="tag">' + escapeHTML(alert.setup_quality) + '</span>',
+        '</div>',
+        '<div class="summary-box">' + escapeHTML(alert.summary) + '</div>',
+        '</div>'
+      ].join('');
     }
 
     function renderDetail() {
@@ -1620,56 +1746,7 @@ const dashboardTemplate = `<!doctype html>
         return;
       }
 
-      const ratings = metricRatings(selected);
-      const metricCards = [
-        selected.gap_percent ? [
-          '<div class="metric">',
-          '<label>Opening Gap</label>',
-          '<strong>' + formatGap(selected.gap_percent) + '</strong>',
-          '</div>',
-        ].join('') : '',
-        renderRatedMetric('Drop From Prior 30m High', selected.drop_from_prior_30m_high_pct.toFixed(1) + '%', ratings.dropFromPrior30mHigh),
-        renderRatedMetric('Distance Below VWAP', selected.distance_below_vwap_pct.toFixed(1) + '%', ratings.distanceBelowVWAP),
-        renderRatedMetric('5m Downside ROC', selected.roc_5m_pct.toFixed(1) + '%', ratings.roc5m),
-        renderRatedMetric('10m Downside ROC', selected.roc_10m_pct.toFixed(1) + '%', ratings.roc10m),
-        renderRatedMetric('20m Downside Slope', selected.down_slope_20m_pct_per_bar.toFixed(3) + '% / bar', ratings.downSlope20m),
-        renderRatedMetric('Range Expansion', 'x' + selected.range_expansion.toFixed(1), ratings.rangeExpansion),
-        renderRatedMetric('Volume Expansion', 'x' + selected.volume_expansion.toFixed(1), ratings.volumeExpansion),
-        [
-          '<div class="metric">',
-          '<label>Volume Since 04:00</label>',
-          '<strong>' + formatWholeNumber(selected.volume_since_4am) + '</strong>',
-          '</div>',
-        ].join(''),
-        [
-          '<div class="metric">',
-          '<label>Minutes From 09:30</label>',
-          '<strong>' + selected.minutes_from_open + '</strong>',
-          '</div>',
-        ].join(''),
-      ].join('');
-
-      dom.detailPane.innerHTML = [
-        '<div class="detail-card">',
-        '<div class="detail-header">',
-        '<div>',
-        '<h3>' + escapeHTML(selected.symbol) + ' <span class="tier-pill">' + escapeHTML(selected.tier) + '</span></h3>',
-        '<p>' + escapeHTML(selected.name) + ' · ' + escapeHTML(selected.alert_time_et) + ' ET · $' + Number(selected.price).toFixed(2) + '</p>',
-        '</div>',
-        '<div class="score-pill ' + scoreClass(selected.flush_score) + '">' + selected.flush_score.toFixed(1) + '</div>',
-        '</div>',
-        '<div class="metric-grid">',
-        metricCards,
-        '</div>',
-        '<div class="tag-row">',
-        '<span class="tag">' + escapeHTML(selected.signal.toUpperCase()) + ' signal</span>',
-        '<span class="tag">' + escapeHTML(selected.sources || 'single source') + '</span>',
-        '<span class="tag">' + escapeHTML(selected.relative_strength_label) + '</span>',
-        '<span class="tag">' + escapeHTML(selected.setup_quality) + '</span>',
-        '</div>',
-        '<div class="summary-box">' + escapeHTML(selected.summary) + '</div>',
-        '</div>'
-      ].join('');
+      dom.detailPane.innerHTML = detailCardHTML(selected);
       syncSelectionButtons();
     }
 

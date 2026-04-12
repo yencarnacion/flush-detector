@@ -524,8 +524,23 @@ function gapperTimeLabel(item) {
   return parts.minuteLabel || "--";
 }
 
+function chartOpenerBaseURL() {
+  const configured = configState?.ui?.chart_opener_base_url || "http://localhost:8081";
+  try {
+    const base = new URL(configured, window.location.origin);
+    const localChartHost = base.hostname === "localhost" || base.hostname === "127.0.0.1" || base.hostname === "[::1]";
+    const localPageHost = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" || window.location.hostname === "[::1]";
+    if (localChartHost && (!localPageHost || window.location.port === "9000")) {
+      return `${window.location.origin}/second`;
+    }
+    return base.href.replace(/\/$/, "");
+  } catch {
+    return String(configured).replace(/\/$/, "");
+  }
+}
+
 function gapperChartURL(item) {
-  const base = configState?.ui?.chart_opener_base_url || "http://localhost:8081";
+  const base = chartOpenerBaseURL();
   const date = item.target_date || todayDateKey();
   const parts = timeParts(item.open_at);
   const signalTime = parts.chartTime === "0000" ? "0930" : parts.chartTime;
@@ -767,7 +782,7 @@ function formatVolume(value) {
 }
 
 function chartURL(alert) {
-  const base = configState?.ui?.chart_opener_base_url || "http://localhost:8081";
+  const base = chartOpenerBaseURL();
   const signalTime = timeParts(alert.alert_time).chartTime;
   return `${base}/api/open-chart/${encodeURIComponent(alert.symbol)}/${encodeURIComponent(alert.session_date)}/${signalTime}?signal=buy`;
 }
@@ -1155,6 +1170,11 @@ reloadBtn.addEventListener("click", async () => {
 });
 
 generateDashboardBtn?.addEventListener("click", async () => {
+  let dashboardWindow = window.open("about:blank", "_blank");
+  if (dashboardWindow) {
+    dashboardWindow.document.title = "Generating Dashboard";
+    dashboardWindow.document.body.textContent = "Generating dashboard...";
+  }
   dashboardPending = true;
   syncReplayControls();
 
@@ -1174,10 +1194,18 @@ generateDashboardBtn?.addEventListener("click", async () => {
       throw new Error(payload.error || "Dashboard generation failed");
     }
     if (payload.dashboard_url) {
-      window.open(payload.dashboard_url, "_blank", "noopener,noreferrer");
+      if (dashboardWindow && !dashboardWindow.closed) {
+        dashboardWindow.location.replace(payload.dashboard_url);
+      } else if (!window.open(payload.dashboard_url, "_blank", "noopener,noreferrer")) {
+        window.location.assign(payload.dashboard_url);
+      }
+      dashboardWindow = null;
     }
     setStatus("Dashboard Ready", `${payload.dashboard_file || "dashboard"} for ${payload.date || targetDate}`);
   } catch (err) {
+    if (dashboardWindow && !dashboardWindow.closed) {
+      dashboardWindow.close();
+    }
     setStatus("Error", err.message);
   } finally {
     dashboardPending = false;

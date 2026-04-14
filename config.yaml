@@ -31,7 +31,7 @@ flush:
   max_alerts_per_symbol_per_day: 30
 
 gapper:
-  enabled: true
+  enabled: false
   gap_percent: 4
   lookback_days: 7
 

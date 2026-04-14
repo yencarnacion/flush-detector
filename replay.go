@@ -37,6 +37,7 @@ type replayState struct {
 	replaying      bool
 	historicalMode bool
 	replayDate     string
+	livePausedAt   time.Time
 }
 
 func parseReplayDate(raw string, tz *time.Location, now time.Time) (time.Time, error) {
@@ -113,6 +114,7 @@ func (a *App) snapshotReplayState() replayState {
 		replaying:      a.replaying,
 		historicalMode: a.historicalMode,
 		replayDate:     a.replayDate,
+		livePausedAt:   a.livePausedAt,
 	}
 }
 
@@ -121,6 +123,9 @@ func (a *App) beginHistoricalReplay(day time.Time) bool {
 	defer a.replayStateMu.Unlock()
 	if a.replaying {
 		return false
+	}
+	if !a.historicalMode && a.livePausedAt.IsZero() {
+		a.livePausedAt = time.Now().In(a.tz)
 	}
 	a.replaying = true
 	a.historicalMode = true
@@ -141,6 +146,7 @@ func (a *App) failHistoricalReplay() {
 	a.replaying = false
 	a.historicalMode = false
 	a.replayDate = ""
+	a.livePausedAt = time.Time{}
 	a.replayStateMu.Unlock()
 }
 
@@ -159,6 +165,7 @@ func (a *App) finishResumeLive() {
 	a.replaying = false
 	a.historicalMode = false
 	a.replayDate = ""
+	a.livePausedAt = time.Time{}
 	a.replayStateMu.Unlock()
 }
 

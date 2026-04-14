@@ -48,6 +48,7 @@ type App struct {
 	replaying      bool
 	historicalMode bool
 	replayDate     string
+	livePausedAt   time.Time
 
 	calendarMu          sync.Mutex
 	replayCalendarCache map[string]replayCalendarCacheEntry
@@ -95,6 +96,7 @@ const (
 	startupWarmupTimeout = 20 * time.Second
 	reloadWarmupTimeout  = 20 * time.Second
 	resumeWarmupTimeout  = 30 * time.Second
+	resumeRebuildTimeout = 15 * time.Minute
 )
 
 func main() {
@@ -267,8 +269,12 @@ func (a *App) runDetector(ctx context.Context) {
 }
 
 func (a *App) warmup(ctx context.Context, symbols []string) {
+	a.warmupUntil(ctx, symbols, time.Now())
+}
+
+func (a *App) warmupUntil(ctx context.Context, symbols []string, asOf time.Time) {
 	cfg := a.currentConfig()
-	nowET := time.Now().In(a.tz)
+	nowET := asOf.In(a.tz)
 	from := flush.VolumeWindowStart(nowET)
 	to := nowET
 	if to.Before(from) {
@@ -318,6 +324,39 @@ func (a *App) warmup(ctx context.Context, symbols []string) {
 		}()
 	}
 	wg.Wait()
+}
+
+func (a *App) rebuildLiveHistory(ctx context.Context, symbols []string, to time.Time) []flush.Alert {
+	from := flush.VolumeWindowStart(to.In(a.tz))
+	if to.Before(from) {
+		return nil
+	}
+
+	allBars := a.backfillDayBars(ctx, symbols, from, to)
+	if ctx.Err() != nil {
+		return nil
+	}
+
+	alerts := make([]flush.Alert, 0)
+	seen := make(map[string]struct{})
+	a.processMu.Lock()
+	defer a.processMu.Unlock()
+	for _, bar := range allBars {
+		meta, ok := a.lookupSymbol(bar.Symbol)
+		if !ok {
+			continue
+		}
+		alert := a.evaluateBarLocked(symbolMeta(meta), bar)
+		if alert == nil {
+			continue
+		}
+		if _, ok := seen[alert.ID]; ok {
+			continue
+		}
+		seen[alert.ID] = struct{}{}
+		alerts = append(alerts, *alert)
+	}
+	return alerts
 }
 
 func (a *App) startWarmup(reason string, timeout time.Duration, symbols []string) {
@@ -739,23 +778,52 @@ func (a *App) replayDay(day time.Time) {
 func (a *App) resumeLive() {
 	a.setStatus("resuming live")
 
-	state, err := a.store.Load()
-	if err != nil {
-		a.log.Warn("load live state during resume", "error", err)
-	}
+	replayState := a.snapshotReplayState()
 
 	cfg := a.currentConfig()
+	symbols := watchlist.Symbols(a.currentWatchlist())
+	now := time.Now().In(a.tz)
+
 	a.processMu.Lock()
 	a.detector.Reset(cfg.Flush, cfg.Alert.CooldownSeconds)
 	a.processMu.Unlock()
 
-	a.hub.ReplaceHistory(state.Alerts)
+	if replayState.livePausedAt.IsZero() {
+		ctx, cancel := context.WithTimeout(context.Background(), resumeWarmupTimeout)
+		defer cancel()
 
-	ctx, cancel := context.WithTimeout(context.Background(), resumeWarmupTimeout)
-	defer cancel()
-	a.warmup(ctx, watchlist.Symbols(a.currentWatchlist()))
-	if err := ctx.Err(); err != nil && err != context.DeadlineExceeded && err != context.Canceled {
-		a.log.Warn("live warmup during resume", "error", ctx.Err())
+		state, err := a.store.Load()
+		if err != nil {
+			a.log.Warn("load live state during resume", "error", err)
+		}
+		a.hub.ReplaceHistory(state.Alerts)
+		a.warmup(ctx, symbols)
+		if err := ctx.Err(); err != nil && err != context.DeadlineExceeded && err != context.Canceled {
+			a.log.Warn("live warmup during resume", "error", ctx.Err())
+		}
+	} else {
+		ctx, cancel := context.WithTimeout(context.Background(), resumeRebuildTimeout)
+		defer cancel()
+
+		a.setStatus("rebuilding live alerts")
+		if cfg.Gapper.Enabled {
+			if err := a.ensureGapperAnalysisForDay(ctx, normalizeReplayDay(now, a.tz), now, cfg); err != nil {
+				a.log.Warn("live gapper analysis during resume rebuild", "error", err)
+			}
+		}
+		alerts := a.rebuildLiveHistory(ctx, symbols, now)
+		if ctx.Err() == nil {
+			a.hub.ReplaceHistory(alerts)
+			if err := a.store.SaveAlerts(alerts); err != nil {
+				a.log.Warn("save rebuilt live state", "error", err)
+			}
+			if err := a.replaceAlertLogForDay(now, alerts); err != nil {
+				a.log.Warn("replace live alert csv during resume", "error", err)
+			}
+		}
+		if err := ctx.Err(); err != nil && err != context.Canceled {
+			a.log.Warn("live alert rebuild during resume ended before completion", "error", err)
+		}
 	}
 
 	a.finishResumeLive()
@@ -764,17 +832,12 @@ func (a *App) resumeLive() {
 }
 
 func (a *App) processBarLocked(meta flush.SymbolMeta, bar bars.Bar, persistState bool) bool {
-	if !a.gapperAllowsSignal(meta.Symbol, bar.End) {
-		a.detector.Seed(meta, bar)
-		return false
-	}
-
-	alert := a.detector.Process(meta, bar)
+	alert := a.evaluateBarLocked(meta, bar)
 	if alert == nil {
 		return false
 	}
-	if gap, ok := a.gapperGapForSignal(meta.Symbol, bar.End); ok {
-		alert.GapPercent = gap
+	if a.alertInHistory(alert.ID) {
+		return false
 	}
 
 	a.hub.AddAlert(*alert)
@@ -787,6 +850,46 @@ func (a *App) processBarLocked(meta flush.SymbolMeta, bar bars.Bar, persistState
 		}
 	}
 	return true
+}
+
+func (a *App) evaluateBarLocked(meta flush.SymbolMeta, bar bars.Bar) *flush.Alert {
+	if !a.gapperAllowsSignal(meta.Symbol, bar.End) {
+		a.detector.Seed(meta, bar)
+		return nil
+	}
+
+	alert := a.detector.Process(meta, bar)
+	if alert == nil {
+		return nil
+	}
+	if gap, ok := a.gapperGapForSignal(meta.Symbol, bar.End); ok {
+		alert.GapPercent = gap
+	}
+	return alert
+}
+
+func (a *App) alertInHistory(id string) bool {
+	for _, existing := range a.hub.History() {
+		if existing.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *App) replaceAlertLogForDay(day time.Time, alerts []flush.Alert) error {
+	if err := a.alertLog.DeleteDay(day); err != nil {
+		return err
+	}
+	for _, alert := range alerts {
+		if !normalizeReplayDay(alert.AlertTime, a.tz).Equal(normalizeReplayDay(day, a.tz)) {
+			continue
+		}
+		if err := a.alertLog.Append(alert); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (a *App) backfillDayBars(ctx context.Context, symbols []string, from, to time.Time) []bars.Bar {
@@ -809,6 +912,9 @@ func (a *App) backfillDayBars(ctx context.Context, symbols []string, from, to ti
 
 			barsList, err := a.massive.BackfillBars(ctx, symbol, from, to, limit)
 			if err != nil {
+				if ctx.Err() != nil {
+					return
+				}
 				a.log.Warn("replay day backfill failed", "symbol", symbol, "error", err)
 				return
 			}

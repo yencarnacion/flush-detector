@@ -330,10 +330,6 @@ function renderWatchlist(payload) {
 
 function applyGappers(payload) {
   gapperState = payload || { enabled: false, pending: false, results: [], count: 0, gap_percent: 4 };
-  if (configState?.gapper) {
-    configState.gapper.enabled = !!gapperState.enabled;
-    configState.gapper.gap_percent = Number(gapperState.gap_percent ?? configState.gapper.gap_percent);
-  }
   renderWatchlistTags();
 }
 

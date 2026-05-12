@@ -13,6 +13,7 @@ func TestLoadConfig(t *testing.T) {
 	path := filepath.Join(dir, "config.yaml")
 	err := os.WriteFile(path, []byte(`
 server_port: 9001
+operating-mode: "rip"
 flush:
   session: "rth"
   start_time: "09:45"
@@ -31,6 +32,9 @@ flush:
 	if cfg.ServerPort != 9001 {
 		t.Fatalf("ServerPort = %d, want 9001", cfg.ServerPort)
 	}
+	if cfg.OperatingMode != "rip" {
+		t.Fatalf("OperatingMode = %s, want rip", cfg.OperatingMode)
+	}
 	if cfg.Flush.StartTime != "09:45" {
 		t.Fatalf("StartTime = %s, want 09:45", cfg.Flush.StartTime)
 	}
@@ -45,6 +49,27 @@ flush:
 	}
 	if !cfg.Gapper.Enabled || cfg.Gapper.GapPercent != 4 || cfg.Gapper.LookbackDays != 7 {
 		t.Fatalf("default gapper config not applied: %+v", cfg.Gapper)
+	}
+}
+
+func TestLoadConfigDefaultsOperatingModeToFlush(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	err := os.WriteFile(path, []byte(`
+server_port: 9001
+`), 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.OperatingMode != "flush" {
+		t.Fatalf("OperatingMode = %s, want flush", cfg.OperatingMode)
 	}
 }
 

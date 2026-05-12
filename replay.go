@@ -281,7 +281,7 @@ func (a *App) replayCalendar(ctx context.Context, month time.Time) (replayCalend
 }
 
 func (a *App) resetHistoricalReplayLocked(day time.Time, cfg config.Config) error {
-	a.detector.Reset(cfg.Flush, cfg.Alert.CooldownSeconds)
+	a.detector.Reset(cfg.Flush, cfg.OperatingMode, cfg.Alert.CooldownSeconds)
 	a.hub.ReplaceHistory(nil)
 	return a.alertLog.DeleteDay(day)
 }

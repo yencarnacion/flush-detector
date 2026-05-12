@@ -918,6 +918,23 @@ function renderFeed(root, rows) {
 function renderCard(alert) {
   const score = Number(alert.flush_score || 0);
   const scoreClass = scoreClassName(score);
+  const operatingMode = String(alert.operating_mode || "flush").toLowerCase();
+  const ripMode = operatingMode === "rip";
+  const metricLabels = ripMode
+    ? {
+        score: "Rip Score",
+        stretch: "30m Rip",
+        vwap: "Above VWAP",
+        rocPrefix: "+",
+        scales: RIP_METRIC_SCORE_SCALES,
+      }
+    : {
+        score: "Flush Score",
+        stretch: "30m Drop",
+        vwap: "Below VWAP",
+        rocPrefix: "-",
+        scales: METRIC_SCORE_SCALES,
+      };
   const metrics = alert.metrics || {};
   const drop30m = Number(metrics.drop_from_prior_30m_high_pct || 0);
   const belowVwap = Number(metrics.distance_below_vwap_pct || 0);
@@ -942,19 +959,19 @@ function renderCard(alert) {
       <div class="detail-score-wrap">
         ${gapBadge(alert)}
         <div class="detail-score">
-          <span class="detail-score-label">Flush Score</span>
+          <span class="detail-score-label">${metricLabels.score}</span>
           <strong class="detail-score-value ${scoreClass}">${score.toFixed(1)}</strong>
         </div>
       </div>
     </div>
     <div class="detail-metrics">
-      ${scoredMetric("30m Drop", drop30m, `${drop30m.toFixed(1)}%`, METRIC_SCORE_SCALES.drop30m)}
-      ${scoredMetric("Below VWAP", belowVwap, `${belowVwap.toFixed(1)}%`, METRIC_SCORE_SCALES.belowVwap)}
-      ${scoredMetric("5m ROC", roc5m, `-${roc5m.toFixed(1)}%`, METRIC_SCORE_SCALES.roc5m)}
-      ${scoredMetric("10m ROC", roc10m, `-${roc10m.toFixed(1)}%`, METRIC_SCORE_SCALES.roc10m)}
-      ${scoredMetric("20m Slope", slope20m, `${slope20m.toFixed(2)}% / bar`, METRIC_SCORE_SCALES.slope20m)}
-      ${scoredMetric("Range Exp", rangeExpansion, `x${rangeExpansion.toFixed(1)}`, METRIC_SCORE_SCALES.rangeExpansion)}
-      ${scoredMetric("Vol Exp", volumeExpansion, `x${volumeExpansion.toFixed(1)}`, METRIC_SCORE_SCALES.volumeExpansion)}
+      ${scoredMetric(metricLabels.stretch, drop30m, `${drop30m.toFixed(1)}%`, metricLabels.scales.drop30m)}
+      ${scoredMetric(metricLabels.vwap, belowVwap, `${belowVwap.toFixed(1)}%`, metricLabels.scales.belowVwap)}
+      ${scoredMetric("5m ROC", roc5m, `${metricLabels.rocPrefix}${roc5m.toFixed(1)}%`, metricLabels.scales.roc5m)}
+      ${scoredMetric("10m ROC", roc10m, `${metricLabels.rocPrefix}${roc10m.toFixed(1)}%`, metricLabels.scales.roc10m)}
+      ${scoredMetric("20m Slope", slope20m, `${slope20m.toFixed(2)}% / bar`, metricLabels.scales.slope20m)}
+      ${scoredMetric("Range Exp", rangeExpansion, `x${rangeExpansion.toFixed(1)}`, metricLabels.scales.rangeExpansion)}
+      ${scoredMetric("Vol Exp", volumeExpansion, `x${volumeExpansion.toFixed(1)}`, metricLabels.scales.volumeExpansion)}
       ${metric("4am Vol", formatVolume(alert.volume_since_4am))}
     </div>
     <div class="detail-summary">${escapeHTML(alert.summary || "")}</div>
@@ -1011,6 +1028,39 @@ const METRIC_SCORE_SCALES = {
   volumeExpansion: {
     bounds: [1.0, 1.5, 2.0, 3.0],
     labels: ["routine", "active", "crowded", "forced", "capitulation-like"],
+    options: { firstInclusive: true },
+  },
+};
+
+const RIP_METRIC_SCORE_SCALES = {
+  drop30m: {
+    bounds: [1.0, 2.0, 3.0, 4.0],
+    labels: ["noise", "push", "extended", "hard rip", "blowoff"],
+  },
+  belowVwap: {
+    bounds: [0.5, 1.0, 2.0, 3.0],
+    labels: ["near value", "firm", "stretched", "deeply stretched", "dislocated"],
+  },
+  roc5m: {
+    bounds: [0.3, 0.7, 1.2, 1.8],
+    labels: ["slow", "buying", "aggressive buying", "rip impulse", "panic chase"],
+  },
+  roc10m: {
+    bounds: [0.5, 1.0, 2.0, 3.0],
+    labels: ["drift", "sustained strength", "strong pressure", "trend rip", "one-sided chase"],
+  },
+  slope20m: {
+    bounds: [0.03, 0.07, 0.12, 0.18],
+    labels: ["drift", "controlled climb", "trend pressure", "heavy pressure", "relentless trend"],
+  },
+  rangeExpansion: {
+    bounds: [1.0, 1.3, 1.6, 2.0],
+    labels: ["normal", "building", "expanding", "emotional", "blowoff-like"],
+    options: { firstInclusive: true },
+  },
+  volumeExpansion: {
+    bounds: [1.0, 1.5, 2.0, 3.0],
+    labels: ["routine", "active", "crowded", "forced", "chase-like"],
     options: { firstInclusive: true },
   },
 };

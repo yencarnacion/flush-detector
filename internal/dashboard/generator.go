@@ -32,6 +32,7 @@ type Alert struct {
 	Symbol                  string    `json:"symbol"`
 	Name                    string    `json:"name"`
 	Sources                 string    `json:"sources"`
+	OperatingMode           string    `json:"operating_mode"`
 	Price                   float64   `json:"price"`
 	FlushScore              float64   `json:"flush_score"`
 	GapPercent              float64   `json:"gap_percent,omitempty"`
@@ -75,6 +76,7 @@ type ConversionResult struct {
 
 type pageModel struct {
 	Title         string
+	Description   string
 	SessionDate   string
 	SourceFile    string
 	GeneratedAt   string
@@ -104,7 +106,12 @@ func GenerateDashboard(inputCSVPath, outputHTMLPath, chartBaseURL string) (*Dash
 // GenerateDashboardWithSessionStart renders the dashboard and computes session-relative timing
 // using the provided HH:MM start (for example the live detector flush.start_time).
 func GenerateDashboardWithSessionStart(inputCSVPath, outputHTMLPath, chartBaseURL, sessionStartTime string) (*DashboardResult, error) {
-	alerts, err := parseAlerts(inputCSVPath, "buy", chartBaseURL, sessionStartTime)
+	return GenerateDashboardWithMode(inputCSVPath, outputHTMLPath, chartBaseURL, sessionStartTime, "flush")
+}
+
+// GenerateDashboardWithMode renders the dashboard with mode-specific copy for flush or rip alerts.
+func GenerateDashboardWithMode(inputCSVPath, outputHTMLPath, chartBaseURL, sessionStartTime, operatingMode string) (*DashboardResult, error) {
+	alerts, err := parseAlerts(inputCSVPath, "buy", chartBaseURL, sessionStartTime, operatingMode)
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +185,7 @@ func convertFile(inputPath, outputDir, signalType, chartBaseURL string) (*Conver
 		return nil, fmt.Errorf("signal must be buy or sell, got %q", signalType)
 	}
 
-	alerts, err := parseAlerts(inputPath, signalType, chartBaseURL, defaultSessionStartTime)
+	alerts, err := parseAlerts(inputPath, signalType, chartBaseURL, defaultSessionStartTime, "flush")
 	if err != nil {
 		return nil, err
 	}
@@ -221,7 +228,7 @@ func convertFile(inputPath, outputDir, signalType, chartBaseURL string) (*Conver
 	}, nil
 }
 
-func parseAlerts(path, signalType, chartBaseURL, sessionStartTime string) ([]Alert, error) {
+func parseAlerts(path, signalType, chartBaseURL, sessionStartTime, operatingMode string) ([]Alert, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open input file: %w", err)
@@ -265,6 +272,7 @@ func parseAlerts(path, signalType, chartBaseURL, sessionStartTime string) ([]Ale
 	}
 
 	alerts := make([]Alert, 0, 512)
+	operatingMode = normalizeOperatingMode(operatingMode)
 	for {
 		record, err := reader.Read()
 		if err == io.EOF {
@@ -291,6 +299,7 @@ func parseAlerts(path, signalType, chartBaseURL, sessionStartTime string) ([]Ale
 			Symbol:                  symbol,
 			Name:                    strings.TrimSpace(field(record, index, "name")),
 			Sources:                 strings.TrimSpace(field(record, index, "sources")),
+			OperatingMode:           operatingMode,
 			Price:                   parseFloat(field(record, index, "price")),
 			FlushScore:              roundTo(parseFloat(field(record, index, "flush_score")), 1),
 			GapPercent:              roundTo(parseFloat(field(record, index, "gap_percent")), 2),
@@ -318,7 +327,7 @@ func parseAlerts(path, signalType, chartBaseURL, sessionStartTime string) ([]Ale
 			alert.Summary = buildSummary(alert)
 		}
 		alert.OpenChartURL = buildOpenChartURL(chartBaseURL, alert)
-		alert.RelativeStrengthLabel = relativeStrengthLabel(alert.FlushScore)
+		alert.RelativeStrengthLabel = relativeStrengthLabel(alert.FlushScore, alert.OperatingMode)
 		alert.SetupQuality = setupQuality(alert)
 		alerts = append(alerts, alert)
 	}
@@ -441,7 +450,8 @@ func writeDashboardHTML(path, sourceFile, signalCSVPath, chartBaseURL string, al
 
 	uniqueSymbols, avgScore, minScore, maxScore, topSymbol, _ := summarizeAlerts(alerts)
 	model := pageModel{
-		Title:         "Flush To Polygon Signal Converter",
+		Title:         dashboardTitle(alerts[0].OperatingMode),
+		Description:   dashboardDescription(alerts[0].OperatingMode),
 		SessionDate:   alerts[0].SessionDate,
 		SourceFile:    filepath.Base(sourceFile),
 		GeneratedAt:   time.Now().In(nyLocation).Format("2006-01-02 15:04:05 MST"),
@@ -510,6 +520,20 @@ func buildOpenChartURL(chartBaseURL string, alert Alert) string {
 }
 
 func buildSummary(alert Alert) string {
+	if alert.OperatingMode == "rip" {
+		summary := fmt.Sprintf(
+			"%.1f%% above prior 30m low, %.1f%% above VWAP, 5m ROC +%.1f%%, range x%.1f, volume x%.1f",
+			alert.DropFromPrior30mHighPct,
+			alert.DistanceBelowVWAPPct,
+			alert.ROC5mPct,
+			alert.RangeExpansion,
+			alert.VolumeExpansion,
+		)
+		if alert.VolumeSince4AM > 0 {
+			return summary + ", 04:00 ET vol " + formatWholeNumber(alert.VolumeSince4AM)
+		}
+		return summary
+	}
 	summary := fmt.Sprintf(
 		"%.1f%% below prior 30m high, %.1f%% below VWAP, 5m ROC -%.1f%%, range x%.1f, volume x%.1f",
 		alert.DropFromPrior30mHighPct,
@@ -558,7 +582,19 @@ func scoreBucket(score float64) int {
 	}
 }
 
-func relativeStrengthLabel(score float64) string {
+func relativeStrengthLabel(score float64, operatingMode string) string {
+	if operatingMode == "rip" {
+		switch {
+		case score >= 90:
+			return "blowoff"
+		case score >= 75:
+			return "stretched"
+		case score >= 60:
+			return "actionable"
+		default:
+			return "monitor"
+		}
+	}
 	switch {
 	case score >= 90:
 		return "capitulation"
@@ -577,7 +613,11 @@ func setupQuality(alert Alert) string {
 		tags = append(tags, "high-dislocation")
 	}
 	if alert.DistanceBelowVWAPPct >= 2 {
-		tags = append(tags, "under-vwap")
+		if alert.OperatingMode == "rip" {
+			tags = append(tags, "over-vwap")
+		} else {
+			tags = append(tags, "under-vwap")
+		}
 	}
 	if alert.RangeExpansion >= 1.5 {
 		tags = append(tags, "range-expanding")
@@ -589,6 +629,27 @@ func setupQuality(alert Alert) string {
 		return "early"
 	}
 	return strings.Join(tags, ", ")
+}
+
+func normalizeOperatingMode(value string) string {
+	if strings.EqualFold(strings.TrimSpace(value), "rip") {
+		return "rip"
+	}
+	return "flush"
+}
+
+func dashboardTitle(operatingMode string) string {
+	if operatingMode == "rip" {
+		return "Rip To Polygon Signal Converter"
+	}
+	return "Flush To Polygon Signal Converter"
+}
+
+func dashboardDescription(operatingMode string) string {
+	if operatingMode == "rip" {
+		return "Single-day rip-detector alerts converted into a polygon-charts upload CSV and a daytrader review board with sortable signal quality, timing, and upside setup context."
+	}
+	return "Single-day flush-detector alerts converted into a polygon-charts upload CSV and a daytrader review board with sortable signal quality, timing, and downside setup context."
 }
 
 func minutesFromRegularOpen(t time.Time) int {
@@ -1179,8 +1240,8 @@ const dashboardTemplate = `<!doctype html>
     <section class="hero">
       <div class="hero-top">
         <div class="title-wrap">
-          <h1>Flush To Polygon Signal Converter</h1>
-          <p>Single-day flush-detector alerts converted into a polygon-charts upload CSV and a daytrader review board with sortable signal quality, timing, and setup context.</p>
+          <h1>{{.Title}}</h1>
+          <p>{{.Description}}</p>
         </div>
         <div class="actions">
           <a class="button" href="{{.SignalCSVPath}}" download>Download Signal CSV</a>
@@ -1312,7 +1373,18 @@ const dashboardTemplate = `<!doctype html>
       return Math.max(0, num);
     }
 
-    function rateDropFromPrior30mHigh(value) {
+    function isRipAlert(alert) {
+      return String(alert.operating_mode || 'flush').toLowerCase() === 'rip';
+    }
+
+    function rateDropFromPrior30mHigh(value, rip) {
+      if (rip) {
+        if (value < 1.0) return { score: 1, label: 'noise' };
+        if (value < 2.0) return { score: 2, label: 'push' };
+        if (value < 3.0) return { score: 3, label: 'extended' };
+        if (value <= 4.0) return { score: 4, label: 'hard rip' };
+        return { score: 5, label: 'blowoff' };
+      }
       if (value < 1.0) return { score: 1, label: 'noise' };
       if (value < 2.0) return { score: 2, label: 'pullback' };
       if (value < 3.0) return { score: 3, label: 'flush' };
@@ -1320,63 +1392,83 @@ const dashboardTemplate = `<!doctype html>
       return { score: 5, label: 'washout' };
     }
 
-    function rateDistanceBelowVWAP(value) {
+    function rateDistanceBelowVWAP(value, rip) {
       if (value < 0.5) return { score: 1, label: 'near value' };
-      if (value < 1.0) return { score: 2, label: 'weak' };
+      if (value < 1.0) return { score: 2, label: rip ? 'firm' : 'weak' };
       if (value < 2.0) return { score: 3, label: 'stretched' };
       if (value <= 3.0) return { score: 4, label: 'deeply stretched' };
       return { score: 5, label: 'dislocated' };
     }
 
-    function rateRoc5m(value) {
+    function rateRoc5m(value, rip) {
       if (value < 0.3) return { score: 1, label: 'slow' };
-      if (value < 0.7) return { score: 2, label: 'selling' };
-      if (value < 1.2) return { score: 3, label: 'aggressive selling' };
-      if (value <= 1.8) return { score: 4, label: 'flush impulse' };
-      return { score: 5, label: 'panic burst' };
+      if (value < 0.7) return { score: 2, label: rip ? 'buying' : 'selling' };
+      if (value < 1.2) return { score: 3, label: rip ? 'aggressive buying' : 'aggressive selling' };
+      if (value <= 1.8) return { score: 4, label: rip ? 'rip impulse' : 'flush impulse' };
+      return { score: 5, label: rip ? 'panic chase' : 'panic burst' };
     }
 
-    function rateRoc10m(value) {
+    function rateRoc10m(value, rip) {
       if (value < 0.5) return { score: 1, label: 'drift' };
-      if (value < 1.0) return { score: 2, label: 'sustained weakness' };
+      if (value < 1.0) return { score: 2, label: rip ? 'sustained strength' : 'sustained weakness' };
       if (value < 2.0) return { score: 3, label: 'strong pressure' };
-      if (value <= 3.0) return { score: 4, label: 'trend flush' };
-      return { score: 5, label: 'one-sided pressure' };
+      if (value <= 3.0) return { score: 4, label: rip ? 'trend rip' : 'trend flush' };
+      return { score: 5, label: rip ? 'one-sided chase' : 'one-sided pressure' };
     }
 
-    function rateDownSlope20m(value) {
+    function rateDownSlope20m(value, rip) {
       if (value < 0.03) return { score: 1, label: 'drift' };
-      if (value < 0.07) return { score: 2, label: 'controlled bleed' };
+      if (value < 0.07) return { score: 2, label: rip ? 'controlled climb' : 'controlled bleed' };
       if (value < 0.12) return { score: 3, label: 'trend pressure' };
       if (value <= 0.18) return { score: 4, label: 'heavy pressure' };
       return { score: 5, label: 'relentless trend' };
     }
 
-    function rateRangeExpansion(value) {
+    function rateRangeExpansion(value, rip) {
       if (value <= 1.0) return { score: 1, label: 'normal' };
       if (value <= 1.3) return { score: 2, label: 'building' };
       if (value <= 1.6) return { score: 3, label: 'expanding' };
       if (value <= 2.0) return { score: 4, label: 'emotional' };
-      return { score: 5, label: 'washout-like' };
+      return { score: 5, label: rip ? 'blowoff-like' : 'washout-like' };
     }
 
-    function rateVolumeExpansion(value) {
+    function rateVolumeExpansion(value, rip) {
       if (value <= 1.0) return { score: 1, label: 'routine' };
       if (value <= 1.5) return { score: 2, label: 'active' };
       if (value <= 2.0) return { score: 3, label: 'crowded' };
       if (value <= 3.0) return { score: 4, label: 'forced' };
-      return { score: 5, label: 'capitulation-like' };
+      return { score: 5, label: rip ? 'chase-like' : 'capitulation-like' };
     }
 
     function metricRatings(alert) {
+      const rip = isRipAlert(alert);
       return {
-        dropFromPrior30mHigh: rateDropFromPrior30mHigh(metricValue(alert.drop_from_prior_30m_high_pct)),
-        distanceBelowVWAP: rateDistanceBelowVWAP(metricValue(alert.distance_below_vwap_pct)),
-        roc5m: rateRoc5m(metricValue(alert.roc_5m_pct)),
-        roc10m: rateRoc10m(metricValue(alert.roc_10m_pct)),
-        downSlope20m: rateDownSlope20m(metricValue(alert.down_slope_20m_pct_per_bar)),
-        rangeExpansion: rateRangeExpansion(metricValue(alert.range_expansion)),
-        volumeExpansion: rateVolumeExpansion(metricValue(alert.volume_expansion)),
+        dropFromPrior30mHigh: rateDropFromPrior30mHigh(metricValue(alert.drop_from_prior_30m_high_pct), rip),
+        distanceBelowVWAP: rateDistanceBelowVWAP(metricValue(alert.distance_below_vwap_pct), rip),
+        roc5m: rateRoc5m(metricValue(alert.roc_5m_pct), rip),
+        roc10m: rateRoc10m(metricValue(alert.roc_10m_pct), rip),
+        downSlope20m: rateDownSlope20m(metricValue(alert.down_slope_20m_pct_per_bar), rip),
+        rangeExpansion: rateRangeExpansion(metricValue(alert.range_expansion), rip),
+        volumeExpansion: rateVolumeExpansion(metricValue(alert.volume_expansion), rip),
+      };
+    }
+
+    function metricLabels(alert) {
+      if (isRipAlert(alert)) {
+        return {
+          stretch: 'Rise From Prior 30m Low',
+          vwap: 'Distance Above VWAP',
+          roc5m: '5m Upside ROC',
+          roc10m: '10m Upside ROC',
+          slope20m: '20m Upside Slope',
+        };
+      }
+      return {
+        stretch: 'Drop From Prior 30m High',
+        vwap: 'Distance Below VWAP',
+        roc5m: '5m Downside ROC',
+        roc10m: '10m Downside ROC',
+        slope20m: '20m Downside Slope',
       };
     }
 
@@ -1685,6 +1777,7 @@ const dashboardTemplate = `<!doctype html>
 
     function detailCardHTML(alert) {
       const ratings = metricRatings(alert);
+      const labels = metricLabels(alert);
       const metricCards = [
         alert.gap_percent ? [
           '<div class="metric">',
@@ -1692,11 +1785,11 @@ const dashboardTemplate = `<!doctype html>
           '<strong>' + formatGap(alert.gap_percent) + '</strong>',
           '</div>',
         ].join('') : '',
-        renderRatedMetric('Drop From Prior 30m High', alert.drop_from_prior_30m_high_pct.toFixed(1) + '%', ratings.dropFromPrior30mHigh),
-        renderRatedMetric('Distance Below VWAP', alert.distance_below_vwap_pct.toFixed(1) + '%', ratings.distanceBelowVWAP),
-        renderRatedMetric('5m Downside ROC', alert.roc_5m_pct.toFixed(1) + '%', ratings.roc5m),
-        renderRatedMetric('10m Downside ROC', alert.roc_10m_pct.toFixed(1) + '%', ratings.roc10m),
-        renderRatedMetric('20m Downside Slope', alert.down_slope_20m_pct_per_bar.toFixed(3) + '% / bar', ratings.downSlope20m),
+        renderRatedMetric(labels.stretch, alert.drop_from_prior_30m_high_pct.toFixed(1) + '%', ratings.dropFromPrior30mHigh),
+        renderRatedMetric(labels.vwap, alert.distance_below_vwap_pct.toFixed(1) + '%', ratings.distanceBelowVWAP),
+        renderRatedMetric(labels.roc5m, alert.roc_5m_pct.toFixed(1) + '%', ratings.roc5m),
+        renderRatedMetric(labels.roc10m, alert.roc_10m_pct.toFixed(1) + '%', ratings.roc10m),
+        renderRatedMetric(labels.slope20m, alert.down_slope_20m_pct_per_bar.toFixed(3) + '% / bar', ratings.downSlope20m),
         renderRatedMetric('Range Expansion', 'x' + alert.range_expansion.toFixed(1), ratings.rangeExpansion),
         renderRatedMetric('Volume Expansion', 'x' + alert.volume_expansion.toFixed(1), ratings.volumeExpansion),
         [

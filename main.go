@@ -142,7 +142,7 @@ func main() {
 		hub:                 webui.NewHub(logger, 200),
 		store:               persistence.New(cfg.Persistence.StateFile),
 		alertLog:            persistence.NewAlertCSVLogger("log", tz),
-		detector:            flush.NewDetector(cfg.Flush, cfg.Alert.CooldownSeconds, tz),
+		detector:            flush.NewDetector(cfg.Flush, cfg.OperatingMode, cfg.Alert.CooldownSeconds, tz),
 		replayCalendarCache: make(map[string]replayCalendarCacheEntry),
 	}
 
@@ -523,7 +523,7 @@ func (a *App) handleGenerateDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 		dashboardInputPath = filteredPath
 	}
-	result, err := dashboard.GenerateDashboardWithSessionStart(dashboardInputPath, dashboardPath, cfg.UI.ChartOpenerBaseURL, cfg.Flush.StartTime)
+	result, err := dashboard.GenerateDashboardWithMode(dashboardInputPath, dashboardPath, cfg.UI.ChartOpenerBaseURL, cfg.Flush.StartTime, cfg.OperatingMode)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -594,7 +594,7 @@ func (a *App) handleApplyLive(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	a.cfg = cfg
 	a.mu.Unlock()
-	a.detector.UpdateConfig(cfg.Flush, cfg.Alert.CooldownSeconds)
+	a.detector.UpdateConfig(cfg.Flush, cfg.OperatingMode, cfg.Alert.CooldownSeconds)
 	a.hub.SetConfig(cfg)
 	a.setStatus("live settings applied")
 	a.startLiveGapperAnalysis("settings applied")
@@ -785,7 +785,7 @@ func (a *App) resumeLive() {
 	now := time.Now().In(a.tz)
 
 	a.processMu.Lock()
-	a.detector.Reset(cfg.Flush, cfg.Alert.CooldownSeconds)
+	a.detector.Reset(cfg.Flush, cfg.OperatingMode, cfg.Alert.CooldownSeconds)
 	a.processMu.Unlock()
 
 	if replayState.livePausedAt.IsZero() {

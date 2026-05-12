@@ -3,6 +3,6 @@ go.sum
 .codex
 log
 state.json
-dashboard
+/dashboard
 tmp
 cache

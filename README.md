@@ -6,6 +6,7 @@
 
 - Loads `MASSIVE_API_KEY` from `.env`
 - Loads runtime settings from `config.yaml`
+- Supports `operating-mode: "flush"` for downside stretch scanning or `"rip"` for mirrored upside stretch scanning
 - Loads one or more watchlists from YAML
 - Backfills recent 1-minute bars at startup for warmup
 - Streams live stock minute aggregates from Massive
@@ -59,6 +60,7 @@ MASSIVE_API_KEY=your_api_key_here
 The app reads `config.yaml` on startup. Important fields:
 
 - `server_port`: HTTP port, default `8087`
+- `operating-mode`: `flush` keeps the downside scanner behavior; `rip` mirrors the same score for upside extension
 - `alert.cooldown_seconds`: per-symbol cooldown
 - `ui.chart_opener_base_url`: used for ticker click/open-chart behavior
 - `flush.start_time` and `flush.end_time`: active ET alert window

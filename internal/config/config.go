@@ -10,16 +10,17 @@ import (
 )
 
 type Config struct {
-	ServerPort  int               `yaml:"server_port" json:"server_port"`
-	Alert       AlertConfig       `yaml:"alert" json:"alert"`
-	Timezone    string            `yaml:"timezone" json:"timezone"`
-	Persistence PersistenceConfig `yaml:"persistence" json:"persistence"`
-	UI          UIConfig          `yaml:"ui" json:"ui"`
-	Flush       FlushConfig       `yaml:"flush" json:"flush"`
-	Gapper      GapperConfig      `yaml:"gapper" json:"gapper"`
-	News        NewsConfig        `yaml:"news" json:"news"`
-	Filings     FilingsConfig     `yaml:"filings" json:"filings"`
-	Logging     LoggingConfig     `yaml:"logging" json:"logging"`
+	ServerPort    int               `yaml:"server_port" json:"server_port"`
+	OperatingMode string            `yaml:"operating-mode" json:"operating_mode"`
+	Alert         AlertConfig       `yaml:"alert" json:"alert"`
+	Timezone      string            `yaml:"timezone" json:"timezone"`
+	Persistence   PersistenceConfig `yaml:"persistence" json:"persistence"`
+	UI            UIConfig          `yaml:"ui" json:"ui"`
+	Flush         FlushConfig       `yaml:"flush" json:"flush"`
+	Gapper        GapperConfig      `yaml:"gapper" json:"gapper"`
+	News          NewsConfig        `yaml:"news" json:"news"`
+	Filings       FilingsConfig     `yaml:"filings" json:"filings"`
+	Logging       LoggingConfig     `yaml:"logging" json:"logging"`
 }
 
 type AlertConfig struct {
@@ -80,7 +81,8 @@ type LoggingConfig struct {
 
 func Default() Config {
 	return Config{
-		ServerPort: 8087,
+		ServerPort:    8087,
+		OperatingMode: "flush",
 		Alert: AlertConfig{
 			SoundFile:       "./web/sounds/flush.wav",
 			UpSoundFile:     "./web/sounds/alert_up.wav",
@@ -153,6 +155,10 @@ func (c *Config) Normalize() {
 	def := Default()
 	if c.ServerPort == 0 {
 		c.ServerPort = def.ServerPort
+	}
+	c.OperatingMode = strings.ToLower(strings.TrimSpace(c.OperatingMode))
+	if c.OperatingMode == "" {
+		c.OperatingMode = def.OperatingMode
 	}
 	if strings.TrimSpace(c.Timezone) == "" {
 		c.Timezone = def.Timezone
@@ -242,6 +248,11 @@ func (c Config) Validate() error {
 	case "pre", "rth", "pm":
 	default:
 		return fmt.Errorf("flush.session must be one of pre|rth|pm")
+	}
+	switch c.OperatingMode {
+	case "flush", "rip":
+	default:
+		return fmt.Errorf("operating-mode must be one of flush|rip")
 	}
 	if c.ServerPort <= 0 {
 		return fmt.Errorf("server_port must be > 0")

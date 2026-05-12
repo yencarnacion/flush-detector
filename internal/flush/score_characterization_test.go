@@ -40,6 +40,54 @@ func TestComputeMetricsCharacterization(t *testing.T) {
 	}
 }
 
+func TestComputeMetricsRipMirrorsFlushFormula(t *testing.T) {
+	t.Parallel()
+
+	history := buildLinearBars(13, 100.0, 0.1, 0.1, 0.2, 100, 150)
+
+	got := ComputeMetricsForMode(history, 100.6, "rip")
+
+	if got.DropFromPrior30mHighPct != 1.5 {
+		t.Fatalf("upside stretch from prior low = %.1f, want 1.5", got.DropFromPrior30mHighPct)
+	}
+	if got.DistanceBelowVWAPPct != 0.8 {
+		t.Fatalf("distance above VWAP = %.1f, want 0.8", got.DistanceBelowVWAPPct)
+	}
+	if got.ROC5mPct != 0.5 {
+		t.Fatalf("upside ROC5mPct = %.1f, want 0.5", got.ROC5mPct)
+	}
+	if got.ROC10mPct != 1.0 {
+		t.Fatalf("upside ROC10mPct = %.1f, want 1.0", got.ROC10mPct)
+	}
+	if got.DownSlope20mPctPerBar != 0.1 {
+		t.Fatalf("upside slope = %.1f, want 0.1", got.DownSlope20mPctPerBar)
+	}
+	if got.RangeExpansion != 2.0 {
+		t.Fatalf("RangeExpansion = %.1f, want 2.0", got.RangeExpansion)
+	}
+	if got.VolumeExpansion != 1.5 {
+		t.Fatalf("VolumeExpansion = %.1f, want 1.5", got.VolumeExpansion)
+	}
+	if got.FlushScore != 42.1 {
+		t.Fatalf("rip score = %.1f, want 42.1", got.FlushScore)
+	}
+}
+
+func TestComputeMetricsRipIgnoresDownsideMove(t *testing.T) {
+	t.Parallel()
+
+	history := buildLinearBars(13, 100.0, -0.1, 0.1, 0.2, 100, 150)
+
+	got := ComputeMetricsForMode(history, 99.4, "rip")
+
+	if got.ROC5mPct != 0 {
+		t.Fatalf("upside ROC5mPct = %.1f, want 0 on a downside move", got.ROC5mPct)
+	}
+	if got.DownSlope20mPctPerBar != 0 {
+		t.Fatalf("upside slope = %.1f, want 0 on a downside move", got.DownSlope20mPctPerBar)
+	}
+}
+
 func TestComputeMetricsHistoryThresholds(t *testing.T) {
 	t.Parallel()
 

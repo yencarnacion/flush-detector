@@ -66,7 +66,7 @@ func TestDetectorThresholdLogic(t *testing.T) {
 	cfg.EndTime = "15:30"
 	cfg.RequireBelowVWAP = false
 	cfg.RequireDropFromRecentHigh = false
-	d := NewDetector(cfg, 0, loc)
+	d := NewDetector(cfg, "flush", 0, loc)
 	meta := SymbolMeta{Symbol: "AAPL"}
 
 	base := time.Date(2026, 4, 2, 9, 30, 0, 0, loc)
@@ -99,7 +99,7 @@ func TestDetectorRequiresVolumeSince4AM(t *testing.T) {
 	cfg.RequireBelowVWAP = false
 	cfg.RequireDropFromRecentHigh = false
 
-	d := NewDetector(cfg, 0, loc)
+	d := NewDetector(cfg, "flush", 0, loc)
 	meta := SymbolMeta{Symbol: "AAPL"}
 
 	premarketStart := time.Date(2026, 4, 2, 4, 0, 0, 0, loc)
@@ -141,7 +141,7 @@ func TestDetectorCanAlertAtConfiguredStartWhenWarmupBarsExist(t *testing.T) {
 	cfg.RequireBelowVWAP = false
 	cfg.RequireDropFromRecentHigh = false
 
-	d := NewDetector(cfg, 0, loc)
+	d := NewDetector(cfg, "flush", 0, loc)
 	meta := SymbolMeta{Symbol: "AAPL"}
 
 	premarketStart := time.Date(2026, 4, 2, 9, 19, 0, 0, loc)

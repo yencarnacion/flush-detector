@@ -15,6 +15,7 @@ type Metrics struct {
 
 type Alert struct {
 	ID             string    `json:"id"`
+	OperatingMode  string    `json:"operating_mode,omitempty"`
 	Symbol         string    `json:"symbol"`
 	Name           string    `json:"name,omitempty"`
 	Sources        []string  `json:"sources,omitempty"`

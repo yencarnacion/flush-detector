@@ -11,11 +11,12 @@ import (
 )
 
 type Detector struct {
-	mu       sync.Mutex
-	cfg      config.FlushConfig
-	cooldown time.Duration
-	tz       *time.Location
-	states   map[string]*symbolState
+	mu            sync.Mutex
+	cfg           config.FlushConfig
+	operatingMode string
+	cooldown      time.Duration
+	tz            *time.Location
+	states        map[string]*symbolState
 }
 
 type symbolState struct {
@@ -29,26 +30,29 @@ type symbolState struct {
 	lastBarEndMS   int64
 }
 
-func NewDetector(cfg config.FlushConfig, cooldownSeconds int, tz *time.Location) *Detector {
+func NewDetector(cfg config.FlushConfig, operatingMode string, cooldownSeconds int, tz *time.Location) *Detector {
 	return &Detector{
-		cfg:      cfg,
-		cooldown: time.Duration(cooldownSeconds) * time.Second,
-		tz:       tz,
-		states:   make(map[string]*symbolState),
+		cfg:           cfg,
+		operatingMode: normalizeOperatingMode(operatingMode),
+		cooldown:      time.Duration(cooldownSeconds) * time.Second,
+		tz:            tz,
+		states:        make(map[string]*symbolState),
 	}
 }
 
-func (d *Detector) UpdateConfig(cfg config.FlushConfig, cooldownSeconds int) {
+func (d *Detector) UpdateConfig(cfg config.FlushConfig, operatingMode string, cooldownSeconds int) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.cfg = cfg
+	d.operatingMode = normalizeOperatingMode(operatingMode)
 	d.cooldown = time.Duration(cooldownSeconds) * time.Second
 }
 
-func (d *Detector) Reset(cfg config.FlushConfig, cooldownSeconds int) {
+func (d *Detector) Reset(cfg config.FlushConfig, operatingMode string, cooldownSeconds int) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.cfg = cfg
+	d.operatingMode = normalizeOperatingMode(operatingMode)
 	d.cooldown = time.Duration(cooldownSeconds) * time.Second
 	d.states = make(map[string]*symbolState)
 }
@@ -76,6 +80,7 @@ func (d *Detector) process(meta SymbolMeta, bar bars.Bar, allowAlert bool) *Aler
 	defer d.mu.Unlock()
 
 	cfg := d.cfg
+	operatingMode := d.operatingMode
 	etEnd := bar.End.In(d.tz)
 	dayKey := etEnd.Format("2006-01-02")
 	volumeStart := VolumeWindowStart(etEnd)
@@ -129,7 +134,7 @@ func (d *Detector) process(meta SymbolMeta, bar bars.Bar, allowAlert bool) *Aler
 		return nil
 	}
 
-	metrics := ComputeMetrics(st.bars, st.vwap.Value())
+	metrics := ComputeMetricsForMode(st.bars, st.vwap.Value(), operatingMode)
 	if cfg.RequireBelowVWAP && metrics.DistanceBelowVWAPPct <= 0 {
 		return nil
 	}
@@ -154,6 +159,7 @@ func (d *Detector) process(meta SymbolMeta, bar bars.Bar, allowAlert bool) *Aler
 
 	return &Alert{
 		ID:             fmt.Sprintf("%s-%d", meta.Symbol, bar.End.UnixMilli()),
+		OperatingMode:  operatingMode,
 		Symbol:         meta.Symbol,
 		Name:           meta.Name,
 		Sources:        append([]string(nil), meta.Sources...),
@@ -163,8 +169,17 @@ func (d *Detector) process(meta SymbolMeta, bar bars.Bar, allowAlert bool) *Aler
 		FlushScore:     metrics.FlushScore,
 		Tier:           TierForScore(metrics.FlushScore),
 		VolumeSince4AM: round1(st.volumeSince4AM),
-		Summary:        Summary(metrics),
+		Summary:        SummaryForMode(metrics, operatingMode),
 		Metrics:        metrics,
+	}
+}
+
+func normalizeOperatingMode(operatingMode string) string {
+	switch strings.ToLower(strings.TrimSpace(operatingMode)) {
+	case "rip":
+		return "rip"
+	default:
+		return "flush"
 	}
 }
 

@@ -1,4 +1,5 @@
 server_port: 8087
+operating-mode: "rip"
 
 alert:
   sound_file: "./web/sounds/flush.wav"

@@ -373,6 +373,36 @@ h2 {
   background: rgba(255, 255, 255, 0.58);
 }
 
+.mode-segment {
+  display: inline-flex;
+  min-height: 44px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.mode-segment[hidden] {
+  display: none;
+}
+
+.mode-segment-btn {
+  min-width: 76px;
+  border: 0;
+  border-radius: 999px;
+  padding: 8px 14px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.mode-segment-btn.active {
+  background: var(--ink);
+  color: #fffaf2;
+}
+
 .sound-badge {
   display: inline-flex;
   align-items: center;

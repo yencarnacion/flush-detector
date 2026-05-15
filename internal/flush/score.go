@@ -8,14 +8,19 @@ import (
 )
 
 func ComputeMetrics(history []bars.Bar, sessionVWAP float64) Metrics {
-	return ComputeMetricsForMode(history, sessionVWAP, "flush")
+	return ComputeMetricsForMode(history, sessionVWAP, "down")
 }
 
 func ComputeMetricsForMode(history []bars.Bar, sessionVWAP float64, operatingMode string) Metrics {
-	if strings.EqualFold(strings.TrimSpace(operatingMode), "rip") {
+	if isUpMode(operatingMode) {
 		return computeRipMetrics(history, sessionVWAP)
 	}
 	return computeFlushMetrics(history, sessionVWAP)
+}
+
+func isUpMode(operatingMode string) bool {
+	value := strings.ToLower(strings.TrimSpace(operatingMode))
+	return value == "up" || value == "rip"
 }
 
 func computeFlushMetrics(history []bars.Bar, sessionVWAP float64) Metrics {

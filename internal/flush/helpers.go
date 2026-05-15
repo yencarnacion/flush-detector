@@ -3,7 +3,6 @@ package flush
 import (
 	"fmt"
 	"math"
-	"strings"
 	"time"
 
 	"flush-detector/internal/bars"
@@ -125,11 +124,11 @@ func TierForScore(score float64) string {
 }
 
 func Summary(metrics Metrics) string {
-	return SummaryForMode(metrics, "flush")
+	return SummaryForMode(metrics, "down")
 }
 
 func SummaryForMode(metrics Metrics, operatingMode string) string {
-	if strings.EqualFold(strings.TrimSpace(operatingMode), "rip") {
+	if isUpMode(operatingMode) {
 		return fmt.Sprintf(
 			"%.1f%% above prior 30m low, %.1f%% above VWAP, 5m ROC +%.1f%%, range x%.1f, volume x%.1f",
 			round1(metrics.DropFromPrior30mHighPct),

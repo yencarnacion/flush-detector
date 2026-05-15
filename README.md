@@ -6,7 +6,7 @@
 
 - Loads `MASSIVE_API_KEY` from `.env`
 - Loads runtime settings from `config.yaml`
-- Supports `operating-mode: "flush"` for downside stretch scanning or `"rip"` for mirrored upside stretch scanning
+- Supports `operating-mode: "down"`, `"up"`, or `"both"`; legacy `"flush"` and `"rip"` config values are still accepted as aliases
 - Loads one or more watchlists from YAML
 - Backfills recent 1-minute bars at startup for warmup
 - Streams live stock minute aggregates from Massive
@@ -17,6 +17,7 @@
 - Supports historical day replay from the UI with per-day calendar selection
 - Supports watchlist reload without restarting
 - Supports live threshold/window changes from the UI
+- In `both` mode, the browser can instantly toggle the visible alert feed between `down` and `up`
 
 ## What it is not yet
 
@@ -60,7 +61,7 @@ MASSIVE_API_KEY=your_api_key_here
 The app reads `config.yaml` on startup. Important fields:
 
 - `server_port`: HTTP port, default `8087`
-- `operating-mode`: `flush` keeps the downside scanner behavior; `rip` mirrors the same score for upside extension
+- `operating-mode`: `down` scans downside stretch, `up` scans the mirrored upside extension, and `both` calculates both sides continuously
 - `alert.cooldown_seconds`: per-symbol cooldown
 - `ui.chart_opener_base_url`: used for ticker click/open-chart behavior
 - `flush.start_time` and `flush.end_time`: active ET alert window
@@ -157,8 +158,9 @@ The UI provides:
 - sort by time or score
 - per-metric `1-5` severity badges on alert cards
 - sound toggle
+- instant `down`/`up` visibility toggle when `operating-mode` is `both`
 - live settings apply
-- top-row `Generate Dashboard` action that builds a flush2polygon-style daily dashboard and opens it
+- top-row `Generate Dashboard` action that builds daily dashboard files and opens the selected side
 - chart open button
 - async news/SEC filings enrichment via `/api/extra`
 
@@ -202,6 +204,6 @@ make build
 - Startup backfill uses Massive REST aggregates.
 - Live streaming uses Massive stock minute aggregate websocket subscriptions.
 - Historical replay rewrites `./log/alerts_YYYYMMDD.csv` for the replayed session date before regenerating alerts for that day.
-- Dashboard generation writes `./dashboard/dashboard_YYYYMMDD.html` and `./dashboard/dashboard_YYYYMMDD_polygon_signals.csv`.
+- Dashboard generation writes `./dashboard/dashboard_YYYYMMDD.html` and `./dashboard/dashboard_YYYYMMDD_polygon_signals.csv`; in `both` mode it writes separate `_down` and `_up` files.
 - News and SEC filings are loaded on demand for each alert card and cached server-side.
 - Triggered alerts are also written to one CSV file per day in `./log`. The CSV includes alert time, symbol, score, tier, price, source tags, cumulative 04:00 ET volume, and the core flush metrics, but it does not include news or SEC filing enrichment.

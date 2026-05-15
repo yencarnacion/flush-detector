@@ -3,6 +3,9 @@ const statusMeta = document.getElementById("statusMeta");
 const searchInput = document.getElementById("searchInput");
 const sortSelect = document.getElementById("sortSelect");
 const soundBtn = document.getElementById("soundBtn");
+const alertModeToggle = document.getElementById("alertModeToggle");
+const alertModeDown = document.getElementById("alertModeDown");
+const alertModeUp = document.getElementById("alertModeUp");
 const soundStateBadge = document.getElementById("soundStateBadge");
 const soundStateText = document.getElementById("soundStateText");
 const replayDayBtn = document.getElementById("replayDayBtn");
@@ -40,6 +43,7 @@ const requireDrop = document.getElementById("requireDrop");
 let ws;
 let configState = null;
 let alerts = [];
+let selectedAlertMode = "down";
 let soundEnabled = localStorage.getItem("flush-detector.sound") !== "off";
 let audioPrimed = false;
 let audioPriming = false;
@@ -88,7 +92,9 @@ function connectWS() {
       alerts.unshift(msg.payload);
       alerts = alerts.slice(0, 200);
       render();
-      playAlertSound();
+      if (alertMatchesSelectedMode(msg.payload)) {
+        playAlertSound();
+      }
       return;
     }
     if (msg.type === "config") {
@@ -245,6 +251,27 @@ function hydrateControls() {
     gapperPercent.value = configState.gapper.gap_percent ?? 4;
     gapperMode.checked = !!configState.gapper.enabled;
   }
+  syncAlertModeToggle();
+}
+
+function normalizedAlertMode(value) {
+  const mode = String(value || "").trim().toLowerCase();
+  if (mode === "rip" || mode === "up") return "up";
+  if (mode === "both") return "both";
+  return "down";
+}
+
+function alertMatchesSelectedMode(alert) {
+  if (!configState || normalizedAlertMode(configState.operating_mode) !== "both") return true;
+  return normalizedAlertMode(alert?.operating_mode) === selectedAlertMode;
+}
+
+function syncAlertModeToggle() {
+  if (!alertModeToggle) return;
+  const showToggle = normalizedAlertMode(configState?.operating_mode) === "both";
+  alertModeToggle.hidden = !showToggle;
+  alertModeDown.classList.toggle("active", selectedAlertMode === "down");
+  alertModeUp.classList.toggle("active", selectedAlertMode === "up");
 }
 
 function updateReplaySummary() {
@@ -791,8 +818,9 @@ function minuteTimestamp(value) {
 
 function filterAlerts() {
   const q = searchInput.value.trim().toUpperCase();
-  if (!q) return alerts.slice();
   return alerts.filter((alert) => {
+    if (!alertMatchesSelectedMode(alert)) return false;
+    if (!q) return true;
     return (alert.symbol || "").includes(q) || (alert.name || "").toUpperCase().includes(q);
   });
 }
@@ -919,17 +947,17 @@ function renderCard(alert) {
   const score = Number(alert.flush_score || 0);
   const scoreClass = scoreClassName(score);
   const operatingMode = String(alert.operating_mode || "flush").toLowerCase();
-  const ripMode = operatingMode === "rip";
-  const metricLabels = ripMode
+  const upMode = normalizedAlertMode(operatingMode) === "up";
+  const metricLabels = upMode
     ? {
-        score: "Rip Score",
-        stretch: "30m Rip",
+        score: "Up Score",
+        stretch: "30m Rise",
         vwap: "Above VWAP",
         rocPrefix: "+",
         scales: RIP_METRIC_SCORE_SCALES,
       }
     : {
-        score: "Flush Score",
+        score: "Down Score",
         stretch: "30m Drop",
         vwap: "Below VWAP",
         rocPrefix: "-",
@@ -1239,15 +1267,22 @@ generateDashboardBtn?.addEventListener("click", async () => {
     if (!res.ok) {
       throw new Error(payload.error || "Dashboard generation failed");
     }
-    if (payload.dashboard_url) {
+    const selectedDashboard = Array.isArray(payload.dashboards)
+      ? payload.dashboards.find((item) => item.mode === selectedAlertMode) || payload.dashboards[0]
+      : payload;
+    const dashboardURL = selectedDashboard?.dashboard_url || payload.dashboard_url;
+    if (dashboardURL) {
       if (dashboardWindow && !dashboardWindow.closed) {
-        dashboardWindow.location.replace(payload.dashboard_url);
-      } else if (!window.open(payload.dashboard_url, "_blank", "noopener,noreferrer")) {
-        window.location.assign(payload.dashboard_url);
+        dashboardWindow.location.replace(dashboardURL);
+      } else if (!window.open(dashboardURL, "_blank", "noopener,noreferrer")) {
+        window.location.assign(dashboardURL);
       }
       dashboardWindow = null;
     }
-    setStatus("Dashboard Ready", `${payload.dashboard_file || "dashboard"} for ${payload.date || targetDate}`);
+    const generatedText = Array.isArray(payload.dashboards) && payload.dashboards.length > 1
+      ? payload.dashboards.map((item) => `${item.mode}: ${item.alerts}`).join(" • ")
+      : `${selectedDashboard?.dashboard_file || "dashboard"} for ${payload.date || targetDate}`;
+    setStatus("Dashboard Ready", generatedText);
   } catch (err) {
     if (dashboardWindow && !dashboardWindow.closed) {
       dashboardWindow.close();
@@ -1257,6 +1292,18 @@ generateDashboardBtn?.addEventListener("click", async () => {
     dashboardPending = false;
     syncReplayControls();
   }
+});
+
+alertModeDown?.addEventListener("click", () => {
+  selectedAlertMode = "down";
+  syncAlertModeToggle();
+  render();
+});
+
+alertModeUp?.addEventListener("click", () => {
+  selectedAlertMode = "up";
+  syncAlertModeToggle();
+  render();
 });
 
 replayDayBtn?.addEventListener("click", async () => {

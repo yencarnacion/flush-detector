@@ -87,13 +87,31 @@ func ensureAlertCSVHeader(path string) error {
 	if closeErr != nil {
 		return closeErr
 	}
-	if len(rows) == 0 || hasCSVColumn(rows[0], "gap_percent") {
+	if len(rows) == 0 {
 		return nil
 	}
-	rows[0] = append(rows[0], "gap_percent")
-	for i := 1; i < len(rows); i++ {
-		rows[i] = append(rows[i], "")
+	if sameCSVHeader(rows[0], alertCSVHeader) {
+		return nil
 	}
+	oldIndex := make(map[string]int, len(rows[0]))
+	for i, name := range rows[0] {
+		oldIndex[strings.TrimSpace(name)] = i
+	}
+	newRows := make([][]string, 0, len(rows))
+	newRows = append(newRows, append([]string(nil), alertCSVHeader...))
+	for _, row := range rows[1:] {
+		newRow := make([]string, len(alertCSVHeader))
+		for i, name := range alertCSVHeader {
+			if oldI, ok := oldIndex[name]; ok && oldI < len(row) {
+				newRow[i] = row[oldI]
+			}
+		}
+		if strings.TrimSpace(newRow[6]) == "" {
+			newRow[6] = legacyOperatingMode(row)
+		}
+		newRows = append(newRows, newRow)
+	}
+	rows = newRows
 
 	var buf bytes.Buffer
 	writer := csv.NewWriter(&buf)
@@ -103,13 +121,16 @@ func ensureAlertCSVHeader(path string) error {
 	return os.WriteFile(path, buf.Bytes(), 0o644)
 }
 
-func hasCSVColumn(header []string, name string) bool {
-	for _, field := range header {
-		if strings.TrimSpace(field) == name {
-			return true
+func sameCSVHeader(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if strings.TrimSpace(a[i]) != b[i] {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 func (l *AlertCSVLogger) DeleteDay(day time.Time) error {
@@ -134,6 +155,7 @@ var alertCSVHeader = []string{
 	"symbol",
 	"name",
 	"sources",
+	"operating_mode",
 	"price",
 	"flush_score",
 	"tier",
@@ -158,6 +180,7 @@ func alertCSVRecord(alert flush.Alert, tz *time.Location) []string {
 		alert.Symbol,
 		alert.Name,
 		strings.Join(alert.Sources, "|"),
+		normalizeOperatingMode(alert.OperatingMode),
 		formatFloat1(alert.Price),
 		formatFloat1(alert.FlushScore),
 		alert.Tier,
@@ -171,6 +194,26 @@ func alertCSVRecord(alert flush.Alert, tz *time.Location) []string {
 		formatFloat0(alert.VolumeSince4AM),
 		alert.Summary,
 		formatOptionalFloat2(alert.GapPercent),
+	}
+}
+
+func legacyOperatingMode(row []string) string {
+	for _, field := range row {
+		if strings.Contains(strings.ToLower(field), "above vwap") || strings.Contains(strings.ToLower(field), "prior 30m low") {
+			return "up"
+		}
+	}
+	return "down"
+}
+
+func normalizeOperatingMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "rip", "up":
+		return "up"
+	case "flush", "down":
+		return "down"
+	default:
+		return "down"
 	}
 }
 

@@ -1,5 +1,5 @@
 server_port: 8087
-operating-mode: "rip"
+operating-mode: "both"
 
 alert:
   sound_file: "./web/sounds/flush.wav"
@@ -27,7 +27,7 @@ flush:
   min_alert_score: 60.0
   backfill_bars: 60
   warmup_lookback_bars: 30
-  require_below_vwap: true
+  require_below_vwap: false
   require_drop_from_recent_high: true
   max_alerts_per_symbol_per_day: 30
 

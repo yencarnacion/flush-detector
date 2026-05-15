@@ -53,6 +53,10 @@
               </select>
             </label>
             <button id="soundBtn" class="action ghost" type="button">Sound: On</button>
+            <div id="alertModeToggle" class="mode-segment" hidden>
+              <button id="alertModeDown" class="mode-segment-btn active" type="button">Down</button>
+              <button id="alertModeUp" class="mode-segment-btn" type="button">Up</button>
+            </div>
             <div class="sound-status" aria-live="polite">
               <span id="soundStateBadge" class="sound-badge blocked">Click To Enable</span>
               <div id="soundStateText" class="sound-text">Chrome usually needs one click before alert audio can play.</div>
@@ -150,6 +154,6 @@
     </div>
 
     <audio id="alertAudio" preload="auto" src="/flush.wav"></audio>
-    <script src="/app.js?v=20260412-dashboard-mobile"></script>
+    <script src="/app.js?v=20260515-both-mode"></script>
   </body>
   </html>

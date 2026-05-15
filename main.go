@@ -346,15 +346,13 @@ func (a *App) rebuildLiveHistory(ctx context.Context, symbols []string, to time.
 		if !ok {
 			continue
 		}
-		alert := a.evaluateBarLocked(symbolMeta(meta), bar)
-		if alert == nil {
-			continue
+		for _, alert := range a.evaluateBarLocked(symbolMeta(meta), bar) {
+			if _, ok := seen[alert.ID]; ok {
+				continue
+			}
+			seen[alert.ID] = struct{}{}
+			alerts = append(alerts, alert)
 		}
-		if _, ok := seen[alert.ID]; ok {
-			continue
-		}
-		seen[alert.ID] = struct{}{}
-		alerts = append(alerts, *alert)
 	}
 	return alerts
 }
@@ -496,8 +494,6 @@ func (a *App) handleGenerateDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dashboardFilename := fmt.Sprintf("dashboard_%s.html", dateCompact)
-	dashboardPath := filepath.Join("dashboard", dashboardFilename)
 	cfg := a.currentConfig()
 	dashboardInputPath := csvPath
 	if cfg.Gapper.Enabled {
@@ -523,21 +519,65 @@ func (a *App) handleGenerateDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 		dashboardInputPath = filteredPath
 	}
-	result, err := dashboard.GenerateDashboardWithMode(dashboardInputPath, dashboardPath, cfg.UI.ChartOpenerBaseURL, cfg.Flush.StartTime, cfg.OperatingMode)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	type generatedDashboard struct {
+		Mode          string `json:"mode"`
+		Alerts        int    `json:"alerts"`
+		DashboardFile string `json:"dashboard_file"`
+		DashboardURL  string `json:"dashboard_url"`
+		SignalCSVURL  string `json:"signal_csv_url"`
+	}
+
+	generated := make([]generatedDashboard, 0, 2)
+	modes := dashboardModes(cfg.OperatingMode)
+	for _, mode := range modes {
+		suffix := ""
+		if len(modes) > 1 {
+			suffix = "_" + mode
+		}
+		dashboardFilename := fmt.Sprintf("dashboard_%s%s.html", dateCompact, suffix)
+		dashboardPath := filepath.Join("dashboard", dashboardFilename)
+		result, err := dashboard.GenerateDashboardWithMode(dashboardInputPath, dashboardPath, cfg.UI.ChartOpenerBaseURL, cfg.Flush.StartTime, mode)
+		if err != nil {
+			if strings.Contains(err.Error(), "input file contains no alerts") {
+				continue
+			}
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+		signalCSVFilename := strings.TrimSuffix(dashboardFilename, ".html") + "_polygon_signals.csv"
+		generated = append(generated, generatedDashboard{
+			Mode:          mode,
+			Alerts:        result.AlertCount,
+			DashboardFile: dashboardFilename,
+			DashboardURL:  "/dashboard/" + dashboardFilename,
+			SignalCSVURL:  "/dashboard/" + signalCSVFilename,
+		})
+	}
+	if len(generated) == 0 {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": fmt.Sprintf("no alerts found for %s", dateKey)})
 		return
 	}
 
-	signalCSVFilename := strings.TrimSuffix(dashboardFilename, ".html") + "_polygon_signals.csv"
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":             true,
 		"date":           dateKey,
-		"alerts":         result.AlertCount,
-		"dashboard_file": dashboardFilename,
-		"dashboard_url":  "/dashboard/" + dashboardFilename,
-		"signal_csv_url": "/dashboard/" + signalCSVFilename,
+		"alerts":         generated[0].Alerts,
+		"dashboard_file": generated[0].DashboardFile,
+		"dashboard_url":  generated[0].DashboardURL,
+		"signal_csv_url": generated[0].SignalCSVURL,
+		"dashboards":     generated,
 	})
+}
+
+func dashboardModes(operatingMode string) []string {
+	switch strings.ToLower(strings.TrimSpace(operatingMode)) {
+	case "both":
+		return []string{"down", "up"}
+	case "rip", "up":
+		return []string{"up"}
+	default:
+		return []string{"down"}
+	}
 }
 
 func (a *App) handleWatchlistReload(w http.ResponseWriter, r *http.Request) {
@@ -832,40 +872,47 @@ func (a *App) resumeLive() {
 }
 
 func (a *App) processBarLocked(meta flush.SymbolMeta, bar bars.Bar, persistState bool) bool {
-	alert := a.evaluateBarLocked(meta, bar)
-	if alert == nil {
-		return false
-	}
-	if a.alertInHistory(alert.ID) {
+	alerts := a.evaluateBarLocked(meta, bar)
+	if len(alerts) == 0 {
 		return false
 	}
 
-	a.hub.AddAlert(*alert)
-	if err := a.alertLog.Append(*alert); err != nil {
-		a.log.Warn("append alert csv", "error", err, "symbol", alert.Symbol, "alert_time", alert.AlertTime.Format(time.RFC3339))
+	added := false
+	for _, alert := range alerts {
+		if a.alertInHistory(alert.ID) {
+			continue
+		}
+
+		a.hub.AddAlert(alert)
+		if err := a.alertLog.Append(alert); err != nil {
+			a.log.Warn("append alert csv", "error", err, "symbol", alert.Symbol, "alert_time", alert.AlertTime.Format(time.RFC3339))
+		}
+		added = true
 	}
-	if persistState {
+	if persistState && added {
 		if err := a.store.SaveAlerts(a.hub.History()); err != nil {
 			a.log.Warn("save state", "error", err)
 		}
 	}
-	return true
+	return added
 }
 
-func (a *App) evaluateBarLocked(meta flush.SymbolMeta, bar bars.Bar) *flush.Alert {
+func (a *App) evaluateBarLocked(meta flush.SymbolMeta, bar bars.Bar) []flush.Alert {
 	if !a.gapperAllowsSignal(meta.Symbol, bar.End) {
 		a.detector.Seed(meta, bar)
 		return nil
 	}
 
-	alert := a.detector.Process(meta, bar)
-	if alert == nil {
+	alerts := a.detector.ProcessAll(meta, bar)
+	if len(alerts) == 0 {
 		return nil
 	}
 	if gap, ok := a.gapperGapForSignal(meta.Symbol, bar.End); ok {
-		alert.GapPercent = gap
+		for i := range alerts {
+			alerts[i].GapPercent = gap
+		}
 	}
-	return alert
+	return alerts
 }
 
 func (a *App) alertInHistory(id string) bool {

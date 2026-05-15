@@ -13,7 +13,7 @@ func TestLoadConfig(t *testing.T) {
 	path := filepath.Join(dir, "config.yaml")
 	err := os.WriteFile(path, []byte(`
 server_port: 9001
-operating-mode: "rip"
+operating-mode: "up"
 flush:
   session: "rth"
   start_time: "09:45"
@@ -32,8 +32,8 @@ flush:
 	if cfg.ServerPort != 9001 {
 		t.Fatalf("ServerPort = %d, want 9001", cfg.ServerPort)
 	}
-	if cfg.OperatingMode != "rip" {
-		t.Fatalf("OperatingMode = %s, want rip", cfg.OperatingMode)
+	if cfg.OperatingMode != "up" {
+		t.Fatalf("OperatingMode = %s, want up", cfg.OperatingMode)
 	}
 	if cfg.Flush.StartTime != "09:45" {
 		t.Fatalf("StartTime = %s, want 09:45", cfg.Flush.StartTime)
@@ -52,7 +52,7 @@ flush:
 	}
 }
 
-func TestLoadConfigDefaultsOperatingModeToFlush(t *testing.T) {
+func TestLoadConfigDefaultsOperatingModeToBoth(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -68,8 +68,8 @@ server_port: 9001
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if cfg.OperatingMode != "flush" {
-		t.Fatalf("OperatingMode = %s, want flush", cfg.OperatingMode)
+	if cfg.OperatingMode != "both" {
+		t.Fatalf("OperatingMode = %s, want both", cfg.OperatingMode)
 	}
 }
 

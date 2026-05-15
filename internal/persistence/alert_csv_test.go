@@ -51,17 +51,20 @@ func TestAlertCSVLoggerAppendCreatesDailyCSV(t *testing.T) {
 	if rows[1][5] != "watchlist|earnings" {
 		t.Fatalf("sources = %q, want watchlist|earnings", rows[1][5])
 	}
-	if rows[1][7] != "62.3" {
-		t.Fatalf("flush score = %q, want 62.3", rows[1][7])
+	if rows[1][6] != "down" {
+		t.Fatalf("operating_mode = %q, want down", rows[1][6])
 	}
-	if rows[1][16] != "512300" {
-		t.Fatalf("volume_since_4am = %q, want 512300", rows[1][16])
+	if rows[1][8] != "62.3" {
+		t.Fatalf("flush score = %q, want 62.3", rows[1][8])
 	}
-	if rows[1][17] == "" {
+	if rows[1][17] != "512300" {
+		t.Fatalf("volume_since_4am = %q, want 512300", rows[1][17])
+	}
+	if rows[1][18] == "" {
 		t.Fatal("summary should not be empty")
 	}
-	if rows[1][18] != "4.25" {
-		t.Fatalf("gap_percent = %q, want 4.25", rows[1][18])
+	if rows[1][19] != "4.25" {
+		t.Fatalf("gap_percent = %q, want 4.25", rows[1][19])
 	}
 	if rows[2][0] != "TSLA-2" {
 		t.Fatalf("second alert id = %q, want TSLA-2", rows[2][0])
@@ -109,7 +112,26 @@ func TestAlertCSVLoggerAppendMigratesExistingHeader(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "alerts_20260406.csv")
-	oldHeader := alertCSVHeader[:len(alertCSVHeader)-1]
+	oldHeader := []string{
+		"alert_id",
+		"alert_time_et",
+		"session_date",
+		"symbol",
+		"name",
+		"sources",
+		"price",
+		"flush_score",
+		"tier",
+		"drop_from_prior_30m_high_pct",
+		"distance_below_vwap_pct",
+		"roc_5m_pct",
+		"roc_10m_pct",
+		"down_slope_20m_pct_per_bar",
+		"range_expansion",
+		"volume_expansion",
+		"volume_since_4am",
+		"summary",
+	}
 	oldRecord := []string{"old-id", "2026-04-06 09:31:00", "2026-04-06", "OLD", "", "", "10.0", "60.0", "Candidate", "1.0", "1.0", "1.0", "1.0", "0.100", "1.0", "1.0", "1000", "old summary"}
 	f, err := os.Create(path)
 	if err != nil {
@@ -140,11 +162,11 @@ func TestAlertCSVLoggerAppendMigratesExistingHeader(t *testing.T) {
 	if !reflect.DeepEqual(rows[0], alertCSVHeader) {
 		t.Fatalf("header = %v, want %v", rows[0], alertCSVHeader)
 	}
-	if len(rows[1]) != len(alertCSVHeader) || rows[1][18] != "" {
+	if len(rows[1]) != len(alertCSVHeader) || rows[1][6] != "down" || rows[1][19] != "" {
 		t.Fatalf("old row was not padded with empty gap field: %v", rows[1])
 	}
-	if rows[2][18] != "4.25" {
-		t.Fatalf("new row gap = %q, want 4.25", rows[2][18])
+	if rows[2][19] != "4.25" {
+		t.Fatalf("new row gap = %q, want 4.25", rows[2][19])
 	}
 }
 
@@ -228,6 +250,7 @@ func sampleAlert(ts time.Time, id, symbol string, score float64) flush.Alert {
 	}
 	return flush.Alert{
 		ID:             id,
+		OperatingMode:  "down",
 		Symbol:         symbol,
 		Name:           symbol + " Inc.",
 		Sources:        []string{"watchlist", "earnings"},

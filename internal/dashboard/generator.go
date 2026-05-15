@@ -109,7 +109,7 @@ func GenerateDashboardWithSessionStart(inputCSVPath, outputHTMLPath, chartBaseUR
 	return GenerateDashboardWithMode(inputCSVPath, outputHTMLPath, chartBaseURL, sessionStartTime, "flush")
 }
 
-// GenerateDashboardWithMode renders the dashboard with mode-specific copy for flush or rip alerts.
+// GenerateDashboardWithMode renders the dashboard with mode-specific copy for down or up alerts.
 func GenerateDashboardWithMode(inputCSVPath, outputHTMLPath, chartBaseURL, sessionStartTime, operatingMode string) (*DashboardResult, error) {
 	alerts, err := parseAlerts(inputCSVPath, "buy", chartBaseURL, sessionStartTime, operatingMode)
 	if err != nil {
@@ -272,7 +272,7 @@ func parseAlerts(path, signalType, chartBaseURL, sessionStartTime, operatingMode
 	}
 
 	alerts := make([]Alert, 0, 512)
-	operatingMode = normalizeOperatingMode(operatingMode)
+	defaultOperatingMode := normalizeOperatingMode(operatingMode)
 	for {
 		record, err := reader.Read()
 		if err == io.EOF {
@@ -290,6 +290,14 @@ func parseAlerts(path, signalType, chartBaseURL, sessionStartTime, operatingMode
 
 		symbol := strings.ToUpper(strings.TrimSpace(field(record, index, "symbol")))
 		sessionDate := strings.TrimSpace(field(record, index, "session_date"))
+		rowOperatingMode := defaultOperatingMode
+		if modeField := strings.TrimSpace(field(record, index, "operating_mode")); modeField != "" {
+			rowOperatingMode = normalizeOperatingMode(modeField)
+		}
+		if defaultOperatingMode != "both" && rowOperatingMode != defaultOperatingMode {
+			continue
+		}
+
 		alert := Alert{
 			SourceOrder:             len(alerts),
 			AlertID:                 strings.TrimSpace(field(record, index, "alert_id")),
@@ -299,7 +307,7 @@ func parseAlerts(path, signalType, chartBaseURL, sessionStartTime, operatingMode
 			Symbol:                  symbol,
 			Name:                    strings.TrimSpace(field(record, index, "name")),
 			Sources:                 strings.TrimSpace(field(record, index, "sources")),
-			OperatingMode:           operatingMode,
+			OperatingMode:           rowOperatingMode,
 			Price:                   parseFloat(field(record, index, "price")),
 			FlushScore:              roundTo(parseFloat(field(record, index, "flush_score")), 1),
 			GapPercent:              roundTo(parseFloat(field(record, index, "gap_percent")), 2),
@@ -520,7 +528,7 @@ func buildOpenChartURL(chartBaseURL string, alert Alert) string {
 }
 
 func buildSummary(alert Alert) string {
-	if alert.OperatingMode == "rip" {
+	if isUpMode(alert.OperatingMode) {
 		summary := fmt.Sprintf(
 			"%.1f%% above prior 30m low, %.1f%% above VWAP, 5m ROC +%.1f%%, range x%.1f, volume x%.1f",
 			alert.DropFromPrior30mHighPct,
@@ -583,7 +591,7 @@ func scoreBucket(score float64) int {
 }
 
 func relativeStrengthLabel(score float64, operatingMode string) string {
-	if operatingMode == "rip" {
+	if isUpMode(operatingMode) {
 		switch {
 		case score >= 90:
 			return "blowoff"
@@ -613,7 +621,7 @@ func setupQuality(alert Alert) string {
 		tags = append(tags, "high-dislocation")
 	}
 	if alert.DistanceBelowVWAPPct >= 2 {
-		if alert.OperatingMode == "rip" {
+		if isUpMode(alert.OperatingMode) {
 			tags = append(tags, "over-vwap")
 		} else {
 			tags = append(tags, "under-vwap")
@@ -632,24 +640,32 @@ func setupQuality(alert Alert) string {
 }
 
 func normalizeOperatingMode(value string) string {
-	if strings.EqualFold(strings.TrimSpace(value), "rip") {
-		return "rip"
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "rip", "up":
+		return "up"
+	case "both":
+		return "both"
+	default:
+		return "down"
 	}
-	return "flush"
+}
+
+func isUpMode(value string) bool {
+	return normalizeOperatingMode(value) == "up"
 }
 
 func dashboardTitle(operatingMode string) string {
-	if operatingMode == "rip" {
-		return "Rip To Polygon Signal Converter"
+	if isUpMode(operatingMode) {
+		return "Up To Polygon Signal Converter"
 	}
-	return "Flush To Polygon Signal Converter"
+	return "Down To Polygon Signal Converter"
 }
 
 func dashboardDescription(operatingMode string) string {
-	if operatingMode == "rip" {
-		return "Single-day rip-detector alerts converted into a polygon-charts upload CSV and a daytrader review board with sortable signal quality, timing, and upside setup context."
+	if isUpMode(operatingMode) {
+		return "Single-day up-detector alerts converted into a polygon-charts upload CSV and a daytrader review board with sortable signal quality, timing, and upside setup context."
 	}
-	return "Single-day flush-detector alerts converted into a polygon-charts upload CSV and a daytrader review board with sortable signal quality, timing, and downside setup context."
+	return "Single-day down-detector alerts converted into a polygon-charts upload CSV and a daytrader review board with sortable signal quality, timing, and downside setup context."
 }
 
 func minutesFromRegularOpen(t time.Time) int {
@@ -1374,7 +1390,8 @@ const dashboardTemplate = `<!doctype html>
     }
 
     function isRipAlert(alert) {
-      return String(alert.operating_mode || 'flush').toLowerCase() === 'rip';
+      const mode = String(alert.operating_mode || 'down').toLowerCase();
+      return mode === 'up' || mode === 'rip';
     }
 
     function rateDropFromPrior30mHigh(value, rip) {

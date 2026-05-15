@@ -82,7 +82,7 @@ type LoggingConfig struct {
 func Default() Config {
 	return Config{
 		ServerPort:    8087,
-		OperatingMode: "flush",
+		OperatingMode: "both",
 		Alert: AlertConfig{
 			SoundFile:       "./web/sounds/flush.wav",
 			UpSoundFile:     "./web/sounds/alert_up.wav",
@@ -108,7 +108,7 @@ func Default() Config {
 			MinAlertScore:             60,
 			BackfillBars:              60,
 			WarmupLookbackBars:        30,
-			RequireBelowVWAP:          true,
+			RequireBelowVWAP:          false,
 			RequireDropFromRecentHigh: true,
 			MaxAlertsPerSymbolPerDay:  3,
 		},
@@ -156,7 +156,7 @@ func (c *Config) Normalize() {
 	if c.ServerPort == 0 {
 		c.ServerPort = def.ServerPort
 	}
-	c.OperatingMode = strings.ToLower(strings.TrimSpace(c.OperatingMode))
+	c.OperatingMode = normalizeOperatingMode(c.OperatingMode)
 	if c.OperatingMode == "" {
 		c.OperatingMode = def.OperatingMode
 	}
@@ -250,9 +250,9 @@ func (c Config) Validate() error {
 		return fmt.Errorf("flush.session must be one of pre|rth|pm")
 	}
 	switch c.OperatingMode {
-	case "flush", "rip":
+	case "down", "up", "both":
 	default:
-		return fmt.Errorf("operating-mode must be one of flush|rip")
+		return fmt.Errorf("operating-mode must be one of down|up|both")
 	}
 	if c.ServerPort <= 0 {
 		return fmt.Errorf("server_port must be > 0")
@@ -261,6 +261,19 @@ func (c Config) Validate() error {
 		return fmt.Errorf("gapper.lookback_days must be >= 1")
 	}
 	return nil
+}
+
+func normalizeOperatingMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "rip", "up":
+		return "up"
+	case "flush", "down":
+		return "down"
+	case "both":
+		return "both"
+	default:
+		return strings.ToLower(strings.TrimSpace(value))
+	}
 }
 
 func APIKeyFromEnv() string {
